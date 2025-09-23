@@ -1,0 +1,19 @@
+{
+  "name": "group-hub",
+  "version": "1.0.0",
+  "description": "Chrome extension workspace for Group Hub.",
+  "type": "commonjs",
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build:worker": "node ./scripts/build-worker.cjs",
+    "build:ui": "npm --prefix group-hub run build:extension",
+    "build:package": "node ./scripts/build-extension.cjs",
+    "build": "npm run clean && npm run build:worker && npm run build:ui && npm run build:package"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.DS_Store
+npm-debug.log*
+logs/
+*.log
+.idea/
+# Angular workspace
+/group-hub/node_modules/
+/group-hub/dist/
+/group-hub/.angular/cache/

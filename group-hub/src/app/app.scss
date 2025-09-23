@@ -1,0 +1,279 @@
+:host {
+  display: block;
+  font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #202124;
+}
+
+.app {
+  min-width: 360px;
+  max-width: 520px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.header__titles {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.header__title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.header__meta {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #5f6368;
+}
+
+.header__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn {
+  border: none;
+  border-radius: 6px;
+  background: #1a73e8;
+  color: #fff;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.btn[disabled] {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.status {
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  background: #e8f0fe;
+  color: #174ea6;
+  margin-bottom: 12px;
+}
+
+.status--success {
+  background: #e6f4ea;
+  color: #0b8043;
+}
+
+.status--error {
+  background: #fce8e6;
+  color: #c5221f;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.controls__search {
+  flex: 1 1 180px;
+  min-width: 180px;
+  padding: 6px 8px;
+  border: 1px solid #dadce0;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.controls__select {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: #5f6368;
+}
+
+.controls__select select {
+  border: 1px solid #dadce0;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 0.85rem;
+}
+
+.view-toggle {
+  display: inline-flex;
+  border: 1px solid #dadce0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.view-toggle__btn {
+  background: transparent;
+  border: none;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  color: #5f6368;
+}
+
+.view-toggle__btn--active {
+  background: #1a73e8;
+  color: #fff;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.group {
+  border: 1px solid #dadce0;
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.group__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.group__color {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-top: 6px;
+}
+
+.group__titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.group__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-end;
+}
+
+.group__name {
+  font-weight: 600;
+  margin-bottom: 2px;
+  word-break: break-word;
+}
+
+.group__name mark {
+  background: #fff3cd;
+  color: inherit;
+  padding: 0 2px;
+  border-radius: 3px;
+}
+
+.group__meta {
+  font-size: 0.75rem;
+  color: #5f6368;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.group__toggle,
+.group__action {
+  border: none;
+  background: transparent;
+  color: #1a73e8;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.group__toggle:hover,
+.group__action:hover {
+  text-decoration: underline;
+}
+
+.tabs {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tabs__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tabs__icon img {
+  width: 16px;
+  height: 16px;
+}
+
+.tabs__placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 0.8rem;
+}
+
+.tabs__details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tabs__title {
+  font-size: 0.82rem;
+  word-break: break-word;
+}
+
+.tabs__url {
+  font-size: 0.72rem;
+  color: #5f6368;
+  word-break: break-all;
+}
+
+.group__show-more {
+  border: none;
+  background: transparent;
+  color: #1a73e8;
+  cursor: pointer;
+  align-self: flex-start;
+  font-size: 0.78rem;
+}
+
+.loading,
+.empty {
+  text-align: center;
+  color: #5f6368;
+  font-size: 0.85rem;
+  padding: 24px 0;
+}
+
+.import-input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
