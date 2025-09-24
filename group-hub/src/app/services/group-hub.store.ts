@@ -105,10 +105,34 @@ export class GroupHubStore {
     if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
       throw new Error('Chrome extension APIs are unavailable.');
     }
-    const response = await chrome.runtime.sendMessage(message);
-    if (response?.error) {
-      throw new Error(response.error);
+    try {
+      const response = await chrome.runtime.sendMessage(message);
+      if (response?.error) {
+        throw new Error(response.error);
+      }
+      return response;
+    } catch (error) {
+      if (this.isTransientMessagingError(error)) {
+        await this.delay(150);
+        const retryResponse = await chrome.runtime.sendMessage(message);
+        if (retryResponse?.error) {
+          throw new Error(retryResponse.error);
+        }
+        return retryResponse;
+      }
+      throw error;
     }
-    return response;
+  }
+
+  isTransientMessagingError(error) {
+    const message = typeof error === 'string' ? error : error?.message ?? '';
+    return (
+      message.includes('Could not establish connection') ||
+      message.includes('Receiving end does not exist')
+    );
+  }
+
+  delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
