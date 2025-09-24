@@ -1,37 +1,31 @@
 <div class="app">
-  <header class="header">
-    <div class="header__titles">
-      <h1 class="header__title">Group Hub</h1>
-      <p class="header__meta">
-        Showing {{ visibleGroupCount() }} of {{ totalGroups() }} groups · {{ totalVisibleTabs() }} tabs
-      </p>
-    </div>
-    <div class="header__actions">
-      <button type="button" class="btn" (click)="refresh()" [disabled]="loading()">
-        {{ loading() ? 'Refreshing…' : 'Refresh' }}
-      </button>
-      <button type="button" class="btn" (click)="triggerExport()">Export</button>
-      <button type="button" class="btn" (click)="openImport()">Import</button>
-    </div>
-  </header>
-
-  <section class="status" *ngIf="statusMessage() as status" [class.status--error]="status.tone === 'error'"
-    [class.status--success]="status.tone === 'success'">
-    {{ status.text }}
-  </section>
-
-  <section class="controls">
+  <div class="toolbar">
     <input
       type="search"
-      class="controls__search"
+      class="toolbar__search"
       placeholder="Search groups or tabs"
       [ngModel]="searchTerm()"
       (ngModelChange)="onSearchChange($event)"
     />
 
-    <label class="controls__select">
-      <span>Sort</span>
-      <select [ngModel]="sortMode()" (ngModelChange)="onSortChange($event)">
+    <div class="view-toggle" role="group" aria-label="View mode">
+      <button type="button" class="view-toggle__btn" [class.view-toggle__btn--active]="viewMode() === 'group-only'"
+              (click)="setViewMode('group-only')">
+        Minimal
+      </button>
+      <button type="button" class="view-toggle__btn" [class.view-toggle__btn--active]="viewMode() === 'preview'"
+              (click)="setViewMode('preview')">
+        Preview
+      </button>
+      <button type="button" class="view-toggle__btn" [class.view-toggle__btn--active]="viewMode() === 'all-tabs'"
+              (click)="setViewMode('all-tabs')">
+        All tabs
+      </button>
+    </div>
+
+    <label class="sort">
+      <span class="sort__label">Sort</span>
+      <select class="sort__input" [ngModel]="sortMode()" (ngModelChange)="onSortChange($event)">
         <option value="name-asc">Name (A→Z)</option>
         <option value="name-desc">Name (Z→A)</option>
         <option value="created-desc">Created (newest)</option>
@@ -39,101 +33,158 @@
       </select>
     </label>
 
-    <div class="view-toggle" role="group" aria-label="View mode">
-      <button
-        type="button"
-        class="view-toggle__btn"
-        [class.view-toggle__btn--active]="viewMode() === 'group-only'"
-        (click)="setViewMode('group-only')"
-      >
-        Groups
-      </button>
-      <button
-        type="button"
-        class="view-toggle__btn"
-        [class.view-toggle__btn--active]="viewMode() === 'preview'"
-        (click)="setViewMode('preview')"
-      >
-        Preview
-      </button>
-      <button
-        type="button"
-        class="view-toggle__btn"
-        [class.view-toggle__btn--active]="viewMode() === 'all-tabs'"
-        (click)="setViewMode('all-tabs')"
-      >
-        All tabs
-      </button>
-    </div>
-  </section>
+    <button type="button" class="toolbar__gear" (click)="toggleUtilityMenu()" title="Utilities">⚙︎</button>
+  </div>
 
-  <section class="list" *ngIf="!loading(); else loadingState">
-    <ng-container *ngIf="filteredGroups().length; else emptyState">
-      <article class="group" *ngFor="let entry of filteredGroups(); trackBy: trackGroup">
-        <header class="group__header">
-          <span class="group__color" [style.background]="colorFor(entry.group.color)"></span>
-          <div class="group__titles">
-            <div class="group__name" [innerHTML]="toggleHighlightTerm(entry.group.title || 'Untitled group')"></div>
-            <div class="group__meta">
-              <span>{{ entry.group.tabCount }} tabs</span>
-              <span>Created {{ formatTimestamp(entry.group.createdAt) }}</span>
-            </div>
+  @if (statusMessage(); as status) {
+    <section class="status" [class.status--error]="status.tone === 'error'"
+      [class.status--success]="status.tone === 'success'">
+      {{ status.text }}
+    </section>
+  }
+
+  <div class="content">
+    @if (loading()) {
+      <div class="loading">Refreshing tab groups…</div>
+    } @else {
+      @if (filteredGroups().length === 0) {
+        <div class="empty">
+          @if (searchActive()) {
+            <p>No groups match your search.</p>
+          } @else {
+            <p>No tab groups found. Create a group in Chrome to get started.</p>
+          }
+        </div>
+      } @else {
+        @if (viewMode() === 'group-only') {
+          <div class="group-gallery">
+            @for (entry of filteredGroups(); track entry.group.id) {
+              <article class="group-chip" [ngStyle]="chipStyles(entry.group.color)">
+                <span class="group-chip__dot" [style.background]="colorFor(entry.group.color)"></span>
+                <button type="button" class="group-chip__title"
+                  (click)="activateGroup(entry.group.id, $event)"
+                  [innerHTML]="toggleHighlightTerm(entry.group.title || 'Untitled group')"></button>
+                <div class="group-chip__actions">
+                  <button type="button" class="group-chip__toggle"
+                    (click)="toggleGroupExpansion(entry.group.id); $event.stopPropagation()"
+                    [title]="isExpanded(entry.group.id) ? 'Hide details' : 'Show details'">
+                    @if (isExpanded(entry.group.id)) {
+                      ⏶
+                    } @else {
+                      ⏷
+                    }
+                  </button>
+                  <button type="button" class="group-chip__open" (click)="activateGroup(entry.group.id, $event)"
+                    title="Open group">↗
+                  </button>
+                </div>
+              </article>
+              @if (isExpanded(entry.group.id)) {
+                <div class="group-panel">
+                  <div class="group-panel__meta">
+                    {{ entry.group.tabCount }} tabs · Created {{ formatTimestamp(entry.group.createdAt) }}
+                  </div>
+                  @if (previewTabs(entry).length > 0) {
+                    <ul class="group-panel__tabs">
+                      @for (tab of previewTabs(entry); track tab.id) {
+                        <li class="group-panel__tab">
+                          <span class="group-panel__icon">
+                            @if (tab.favIconUrl) {
+                              <img [src]="tab.favIconUrl" alt="" />
+                            } @else {
+                              <span class="tabs__placeholder">🗂</span>
+                            }
+                          </span>
+                          <div class="group-panel__details">
+                            <div class="group-panel__title">{{ tab.title || 'Untitled tab' }}</div>
+                            <div
+                              class="group-panel__url"
+                              [innerHTML]="toggleHighlightTerm(tab.url || '')"
+                              [title]="tab.url"
+                            ></div>
+                          </div>
+                        </li>
+                      }
+                    </ul>
+                  }
+                  <div class="group-panel__actions">
+                    <button type="button" class="group-panel__link" (click)="setViewMode('preview')">
+                      Open preview view
+                    </button>
+                  </div>
+                </div>
+              }
+            }
           </div>
-          <div class="group__actions">
-            <button type="button" class="group__action" (click)="activateGroup(entry.group.id, $event)">
-              Open
-            </button>
-            <button type="button" class="group__toggle" (click)="toggleGroupExpansion(entry.group.id)">
-              {{ groupToggleLabel(entry.group.id) }}
-            </button>
-          </div>
-        </header>
+        } @else {
+          <section class="list list--full">
+            @for (entry of filteredGroups(); track entry.group.id) {
+              <article class="group">
+                <header class="group__header">
+                  <span class="group__color" [style.background]="colorFor(entry.group.color)"></span>
+                  <div class="group__titles">
+                    <div class="group__name" [innerHTML]="toggleHighlightTerm(entry.group.title || 'Untitled group')"></div>
+                    <div class="group__meta">
+                      <span class="group__meta-item">{{ entry.group.tabCount }} tabs</span>
+                      <span class="group__meta-item">Created {{ formatTimestamp(entry.group.createdAt) }}</span>
+                    </div>
+                  </div>
+                  <div class="group__actions">
+                    <button type="button" class="group__action" (click)="activateGroup(entry.group.id, $event)">
+                      Open
+                    </button>
+                    <button type="button" class="group__toggle" (click)="toggleGroupExpansion(entry.group.id)">
+                      {{ groupToggleLabel(entry.group.id) }}
+                    </button>
+                  </div>
+                </header>
 
-        <ul class="tabs" *ngIf="visibleTabsForGroup(entry).length > 0">
-          <li class="tabs__item" *ngFor="let tab of visibleTabsForGroup(entry); trackBy: trackTab">
-            <span class="tabs__icon">
-              <img *ngIf="tab.favIconUrl; else iconFallback" [src]="tab.favIconUrl" alt="" />
-              <ng-template #iconFallback>
-                <span class="tabs__placeholder">🗂</span>
-              </ng-template>
-            </span>
-            <div class="tabs__details">
-              <div class="tabs__title" [innerHTML]="toggleHighlightTerm(tab.title || 'Untitled tab')"></div>
-              <div class="tabs__url" [innerHTML]="toggleHighlightTerm(tab.url)"></div>
-            </div>
-          </li>
-        </ul>
+                @if (visibleTabsForGroup(entry).length > 0) {
+                  <ul class="tabs">
+                    @for (tab of visibleTabsForGroup(entry); track tab.id) {
+                      <li class="tabs__item">
+                        <span class="tabs__icon">
+                          @if (tab.favIconUrl) {
+                            <img [src]="tab.favIconUrl" alt="" />
+                          } @else {
+                            <span class="tabs__placeholder">🗂</span>
+                          }
+                        </span>
+                        <div class="tabs__details">
+                          <div class="tabs__title" [innerHTML]="toggleHighlightTerm(tab.title || 'Untitled tab')"></div>
+                          <div
+                            class="tabs__url"
+                            [innerHTML]="toggleHighlightTerm(tab.url || '')"
+                            [title]="tab.url"
+                          ></div>
+                        </div>
+                      </li>
+                    }
+                  </ul>
+                }
 
-        <button
-          type="button"
-          class="group__show-more"
-          *ngIf="hiddenTabCount(entry) > 0"
-          (click)="expandGroupFully(entry.group.id)"
-        >
-          Show {{ hiddenTabCount(entry) }} more
-        </button>
-      </article>
-    </ng-container>
-  </section>
+                @if (hiddenTabCount(entry) > 0) {
+                  <button type="button" class="group__show-more" (click)="expandGroupFully(entry.group.id)">
+                    Show {{ hiddenTabCount(entry) }} more
+                  </button>
+                }
+              </article>
+            }
+          </section>
+        }
+      }
+    }
+  </div>
 
-  <ng-template #loadingState>
-    <div class="loading">Refreshing tab groups…</div>
-  </ng-template>
+  <div class="utility-menu" *ngIf="utilityMenuOpen()">
+    <button type="button" class="utility-menu__btn" (click)="triggerExport()">Export current view</button>
+    <button type="button" class="utility-menu__btn" (click)="openImport()">Import from file</button>
+  </div>
 
-  <ng-template #emptyState>
-    <div class="empty">
-      <p *ngIf="searchActive(); else noGroups">No groups match your search.</p>
-      <ng-template #noGroups>
-        <p>No tab groups found. Create a group in Chrome to get started.</p>
-      </ng-template>
-    </div>
-  </ng-template>
+  <footer class="footer">
+    <span class="footer__summary">{{ infoSummary() }}</span>
+  </footer>
 
-  <input
-    type="file"
-    accept="application/json"
-    class="import-input"
-    #importInput
-    (change)="handleImportSelected($event)"
-  />
+  <input type="file" accept="application/json" class="import-input" #importInput
+    (change)="handleImportSelected($event)" />
 </div>

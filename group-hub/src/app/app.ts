@@ -48,6 +48,7 @@ export class App implements OnInit {
   expandedGroups = signal(new Set());
   collapsedGroups = signal(new Set());
   statusMessage = signal(null);
+  utilityMenuVisible = signal(false);
 
   snapshot = computed(() => this.store.snapshot());
   loading = computed(() => this.store.loading());
@@ -155,36 +156,35 @@ export class App implements OnInit {
   }
 
   visibleTabsForGroup(entry) {
-    const searchTerm = this.searchTerm().trim();
-    const hasSearch = searchTerm.length > 0;
-    const baseTabs = entry.groupMatches || !hasSearch ? entry.group.tabs : entry.matchingTabs;
+    const tabs = this.orderedTabs(entry);
 
-    if (!baseTabs.length) {
+    if (!tabs.length) {
       return [];
     }
 
     const mode = this.viewMode();
     if (mode === VIEW_MODE.ALL_TABS) {
-      return this.collapsedGroups().has(entry.group.id) ? baseTabs.slice(0, 2) : baseTabs;
+      return this.collapsedGroups().has(entry.group.id) ? tabs.slice(0, 2) : tabs;
     }
 
     if (this.expandedGroups().has(entry.group.id)) {
-      return baseTabs;
+      return tabs;
     }
 
     if (mode === VIEW_MODE.PREVIEW) {
-      return baseTabs.slice(0, 2);
+      return tabs.slice(0, 2);
     }
 
     return [];
   }
 
   hiddenTabCount(entry) {
-    const searchTerm = this.searchTerm().trim();
-    const hasSearch = searchTerm.length > 0;
-    const baseTabs = entry.groupMatches || !hasSearch ? entry.group.tabs : entry.matchingTabs;
+    if (this.viewMode() === VIEW_MODE.GROUPS) {
+      return 0;
+    }
+    const total = this.orderedTabs(entry);
     const visible = this.visibleTabsForGroup(entry).length;
-    return Math.max(0, baseTabs.length - visible);
+    return Math.max(0, total.length - visible);
   }
 
   toggleHighlightTerm(text) {
@@ -204,6 +204,23 @@ export class App implements OnInit {
 
   colorFor(color) {
     return COLOR_PALETTE[color] ?? COLOR_PALETTE.grey;
+  }
+
+  chipStyles(color) {
+    const base = this.colorFor(color);
+    const { r, g, b } = hexToRgb(base);
+    return {
+      background: `rgba(${r}, ${g}, ${b}, 0.16)`,
+      borderColor: `rgba(${r}, ${g}, ${b}, 0.32)`
+    };
+  }
+
+  previewTabs(entry) {
+    return this.orderedTabs(entry).slice(0, 3);
+  }
+
+  isExpanded(groupId) {
+    return this.expandedGroups().has(groupId);
   }
 
   async refresh() {
@@ -262,6 +279,32 @@ export class App implements OnInit {
       return this.collapsedGroups().has(groupId) ? 'Expand' : 'Collapse';
     }
     return this.expandedGroups().has(groupId) ? 'Collapse' : 'Expand';
+  }
+
+  infoSummary() {
+    return `Showing ${this.visibleGroupCount()} of ${this.totalGroups()} groups · ${this.totalVisibleTabs()} tabs`;
+  }
+  toggleUtilityMenu() {
+    this.utilityMenuVisible.update((open) => !open);
+  }
+
+  utilityMenuOpen() {
+    return this.utilityMenuVisible();
+  }
+
+
+  orderedTabs(entry) {
+    const groupTabs = entry?.group?.tabs ?? [];
+    if (!this.searchActive()) {
+      return groupTabs;
+    }
+    const matching = entry?.matchingTabs ?? [];
+    if (!matching.length) {
+      return groupTabs;
+    }
+    const seen = new Set(matching);
+    const remainder = groupTabs.filter((tab) => !seen.has(tab));
+    return [...matching, ...remainder];
   }
 
   computeFilteredGroups() {
@@ -374,4 +417,16 @@ export class App implements OnInit {
       this.statusTimeout = undefined;
     }, 4000);
   }
+}
+
+function hexToRgb(hex) {
+  const raw = hex.replace('#', '');
+  const value = raw.length === 3
+    ? raw.split('').map((char) => char + char).join('')
+    : raw.padStart(6, '0');
+  const num = parseInt(value, 16);
+  const r = (num >> 16) & 255;
+  const g = (num >> 8) & 255;
+  const b = num & 255;
+  return { r, g, b };
 }
