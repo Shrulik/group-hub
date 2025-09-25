@@ -375,7 +375,8 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
         const tab = await chrome.tabs.get(id);
         previousAssignments.push({
           tabId: id,
-          previousGroupId: typeof tab.groupId === 'number' ? tab.groupId : -1
+          previousGroupId: typeof tab.groupId === 'number' ? tab.groupId : -1,
+          previousWindowId: tab.windowId
         });
       } catch (error) {
         console.warn('[GroupHub] unable to inspect tab before move', id, error);

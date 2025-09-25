@@ -26,7 +26,8 @@ import { App } from './app';
     query: jasmine.createSpy('chrome.tabs.query').and.returnValue(Promise.resolve([])),
     group: jasmine.createSpy('chrome.tabs.group').and.returnValue(Promise.resolve(1)),
     ungroup: jasmine.createSpy('chrome.tabs.ungroup').and.returnValue(Promise.resolve()),
-    get: jasmine.createSpy('chrome.tabs.get').and.returnValue(Promise.resolve({ id: 1, groupId: -1 }))
+    get: jasmine.createSpy('chrome.tabs.get').and.returnValue(Promise.resolve({ id: 1, groupId: -1, windowId: 1 })),
+    move: jasmine.createSpy('chrome.tabs.move').and.returnValue(Promise.resolve({}))
   },
   windows: {
     getLastFocused: jasmine.createSpy('chrome.windows.getLastFocused').and.returnValue(Promise.resolve({ id: 1, type: 'normal' }))

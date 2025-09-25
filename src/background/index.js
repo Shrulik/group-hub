@@ -279,7 +279,8 @@ async function moveTabsToGroup(targetGroupId, tabIds) {
       const tab = await chrome.tabs.get(id);
       previousAssignments.push({
         tabId: id,
-        previousGroupId: typeof tab.groupId === 'number' ? tab.groupId : TAB_GROUP_ID_NONE
+        previousGroupId: typeof tab.groupId === 'number' ? tab.groupId : TAB_GROUP_ID_NONE,
+        previousWindowId: tab.windowId
       });
       validTabIds.push(id);
     } catch (error) {
@@ -311,30 +312,47 @@ async function restoreTabsToGroups(assignments) {
   for (const entry of assignments) {
     const tabId = entry?.tabId;
     const previousGroupId = entry?.previousGroupId;
+    const previousWindowId = entry?.previousWindowId;
     if (!Number.isFinite(tabId)) {
       continue;
     }
     if (!Number.isFinite(previousGroupId) || previousGroupId === TAB_GROUP_ID_NONE) {
-      toUngroup.push(tabId);
+      toUngroup.push({ tabId, windowId: previousWindowId });
     } else {
       if (!groupedMoves.has(previousGroupId)) {
         groupedMoves.set(previousGroupId, []);
       }
-      groupedMoves.get(previousGroupId).push(tabId);
+      groupedMoves.get(previousGroupId).push({ tabId, windowId: previousWindowId });
     }
   }
 
+  // Handle ungrouped tabs - move to original window and ungroup
   if (toUngroup.length) {
-    try {
-      await chrome.tabs.ungroup(toUngroup);
-    } catch (error) {
-      console.warn('[GroupHub] failed to ungroup tabs during undo', error);
+    for (const { tabId, windowId } of toUngroup) {
+      try {
+        await chrome.tabs.move(tabId, { windowId, index: -1 });
+        await chrome.tabs.ungroup(tabId);
+      } catch (error) {
+        console.warn('[GroupHub] failed to restore ungrouped tab', tabId, error);
+      }
     }
   }
 
-  for (const [groupId, ids] of groupedMoves.entries()) {
+  // Handle grouped tabs - move to original window first, then group
+  for (const [groupId, tabEntries] of groupedMoves.entries()) {
     try {
-      await chrome.tabs.group({ tabIds: ids, groupId });
+      const tabIds = [];
+      for (const { tabId, windowId } of tabEntries) {
+        try {
+          await chrome.tabs.move(tabId, { windowId, index: -1 });
+          tabIds.push(tabId);
+        } catch (error) {
+          console.warn('[GroupHub] failed to move tab to window', tabId, error);
+        }
+      }
+      if (tabIds.length > 0) {
+        await chrome.tabs.group({ tabIds, groupId });
+      }
     } catch (error) {
       console.warn('[GroupHub] failed to restore tabs to group', groupId, error);
     }
