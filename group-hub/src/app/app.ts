@@ -52,7 +52,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
   statusMessage = signal(null);
   utilityMenuVisible = signal(false);
   selectedTabIds = signal([]);
-  lastMoveAction = signal(null);
+  lastMoveAction = signal(null); // Keep for backward compatibility, but will load from storage
 
   snapshot = computed(() => this.store.snapshot());
   loading = computed(() => this.store.loading());
@@ -66,6 +66,13 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     this.filteredGroups().reduce((acc, entry) => acc + entry.group.tabCount, 0)
   );
   selectionCount = computed(() => this.selectedTabIds().length);
+  lastMoveStatusText = computed(() => {
+    const action = this.lastMoveAction();
+    if (!action) return '';
+    const count = action.movedTabIds?.length ?? 0;
+    const groupName = this.getGroupName(action.targetGroupId) || 'Unknown group';
+    return `${count} tab${count === 1 ? '' : 's'} moved to ${groupName}`;
+  });
 
   @ViewChild('importInput') importInput;
 
@@ -82,6 +89,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
   async ngOnInit() {
     try {
       await this.store.init();
+      await this.loadLastMoveAction();
     } catch (error) {
       console.error('[GroupHub] initialization failed', error);
       this.flashStatus('Chrome extension APIs unavailable.', 'error');
@@ -376,10 +384,13 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
       const result = await this.store.moveTabsToGroup(groupId, tabIds);
       if (result?.previousAssignments?.length) {
         const movedTabIds = result.movedTabIds ?? tabIds;
-        this.lastMoveAction.set({
+        const action = {
           assignments: result.previousAssignments,
-          movedTabIds
-        });
+          movedTabIds,
+          targetGroupId: groupId
+        };
+        this.lastMoveAction.set(action);
+        await this.store.saveLastMoveAction(action);
         const count = movedTabIds.length;
         this.flashStatus(`Moved ${count} tab${count === 1 ? '' : 's'} to the group.`, 'success');
       } else {
@@ -406,6 +417,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
       await this.store.restoreTabs(action.assignments);
       this.flashStatus('Move undone.', 'success');
       this.lastMoveAction.set(null);
+      await this.store.clearLastMoveAction();
       void this.loadSelectedTabs();
     } catch (error) {
       console.error('[GroupHub] undo move failed', error);
@@ -413,6 +425,22 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
+  async loadLastMoveAction() {
+    try {
+      const action = await this.store.loadLastMoveAction();
+      this.lastMoveAction.set(action);
+    } catch (error) {
+      console.error('[GroupHub] failed to load last move action', error);
+      this.lastMoveAction.set(null);
+    }
+  }
+
+  getGroupName(groupId) {
+    const snapshot = this.snapshot();
+    if (!snapshot?.groups) return null;
+    const group = snapshot.groups.find(g => g.id === groupId);
+    return group?.title || null;
+  }
 
   orderedTabs(entry) {
     const groupTabs = entry?.group?.tabs ?? [];

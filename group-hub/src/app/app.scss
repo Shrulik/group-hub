@@ -543,6 +543,14 @@ app-root {
   text-decoration: underline;
 }
 
+.footer__move-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: var(--gh-text-secondary);
+}
+
 .icon-button,
 .icon-badge {
   position: relative;

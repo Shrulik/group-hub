@@ -7,7 +7,8 @@ import { App } from './app';
   storage: {
     local: {
       get: jasmine.createSpy('chrome.storage.local.get').and.returnValue(Promise.resolve({})),
-      set: jasmine.createSpy('chrome.storage.local.set').and.returnValue(Promise.resolve())
+      set: jasmine.createSpy('chrome.storage.local.set').and.returnValue(Promise.resolve()),
+      remove: jasmine.createSpy('chrome.storage.local.remove').and.returnValue(Promise.resolve())
     },
     onChanged: {
       addListener: jasmine.createSpy('chrome.storage.onChanged.addListener'),

@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { Injectable, signal } from '@angular/core';
-import { GROUPS_SNAPSHOT_KEY } from '@group-hub/shared/constants';
+import { GROUPS_SNAPSHOT_KEY, LAST_MOVE_ACTION_KEY } from '@group-hub/shared/constants';
 
 @Injectable({ providedIn: 'root' })
 export class GroupHubStore {
@@ -88,6 +88,51 @@ export class GroupHubStore {
       assignments
     });
     return response.result;
+  }
+
+  async saveLastMoveAction(action) {
+    try {
+      const data = {
+        ...action,
+        timestamp: Date.now()
+      };
+      await chrome.storage.local.set({ [LAST_MOVE_ACTION_KEY]: data });
+    } catch (error) {
+      console.error('[GroupHub] failed to save last move action', error);
+    }
+  }
+
+  async loadLastMoveAction() {
+    try {
+      const stored = await chrome.storage.local.get(LAST_MOVE_ACTION_KEY);
+      const action = stored[LAST_MOVE_ACTION_KEY];
+      if (action && this.isMoveActionValid(action)) {
+        return action;
+      }
+      // Clean up expired action
+      await this.clearLastMoveAction();
+      return null;
+    } catch (error) {
+      console.error('[GroupHub] failed to load last move action', error);
+      return null;
+    }
+  }
+
+  async clearLastMoveAction() {
+    try {
+      await chrome.storage.local.remove(LAST_MOVE_ACTION_KEY);
+    } catch (error) {
+      console.error('[GroupHub] failed to clear last move action', error);
+    }
+  }
+
+  isMoveActionValid(action) {
+    if (!action || !action.timestamp) {
+      return false;
+    }
+    // Expire after 24 hours
+    const EXPIRE_MS = 24 * 60 * 60 * 1000;
+    return Date.now() - action.timestamp < EXPIRE_MS;
   }
 
   async loadSnapshotFromStorage() {

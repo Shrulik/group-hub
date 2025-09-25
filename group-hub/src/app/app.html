@@ -194,7 +194,10 @@
     <span class="footer__summary">{{ infoSummary() }}</span>
     <div class="footer__actions">
       @if (undoAvailable()) {
-        <button type="button" class="footer__undo" (click)="undoLastMove()">Undo move</button>
+        <span class="footer__move-status">
+          {{ lastMoveStatusText() }}
+          <button type="button" class="footer__undo" (click)="undoLastMove()">Undo</button>
+        </span>
       }
       <button type="button" class="footer__gear" (click)="toggleUtilityMenu()" title="Utilities">⚙︎</button>
     </div>
