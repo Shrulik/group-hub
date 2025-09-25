@@ -81,7 +81,6 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     dateStyle: 'medium',
     timeStyle: 'short'
   });
-  resizeHandler = () => this.updateViewportHeight();
   focusHandler = () => {
     void this.loadSelectedTabs();
   };
@@ -97,24 +96,12 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngAfterViewInit() {
-    this.updateViewportHeight();
-    window.addEventListener('resize', this.resizeHandler);
     window.addEventListener('focus', this.focusHandler);
     void this.loadSelectedTabs();
   }
 
   ngOnDestroy() {
-    window.removeEventListener('resize', this.resizeHandler);
     window.removeEventListener('focus', this.focusHandler);
-  }
-
-  updateViewportHeight() {
-    try {
-      const height = Math.min(window.innerHeight || 0, 600);
-      document.documentElement.style.setProperty('--gh-popup-height', `${height}px`);
-    } catch (error) {
-      console.debug('[GroupHub] unable to update viewport height', error);
-    }
   }
 
   trackGroup = (_index, entry) => entry.group.id;
