@@ -8,11 +8,13 @@
 
 
 ## Build/Test Commands
-- **Full build**: `npm run build`
+- **Full build**: `npm run build` (cleans and packages to `dist/extension/`)
 - **UI dev server**: `npm --prefix group-hub run start`
 - **Run all tests**: `npm --prefix group-hub run test -- --watch=false`
 - **Run single test**: `npm --prefix group-hub run test -- --include="**/file.spec.ts" --watch=false`
 - **Format code**: `npx prettier --write group-hub/src/**/*.{ts,html,scss}`
+
+Use `npm --prefix group-hub` for commands in the Angular subfolder to avoid directory changes. Run builds from the project root to prevent leftover intermediate `dist/` folders (e.g., `group-hub/dist/group-hub/`). The full build ensures a clean `dist/extension/` output.
 
 ## Code Style Guidelines
 - **TypeScript**: Strict mode enabled, single quotes, 2-space indentation, no semicolons

@@ -40,10 +40,7 @@ npm run build
 ```
 The command cleans previous artefacts, bundles the service worker, builds the Angular UI, and assembles `dist/extension`. Load that folder via **chrome://extensions → Load unpacked** to try the latest build.
 
-### Handy scripts
-- `npm run build:worker` – bundle only the background service worker.
-- `npm run build:ui` – produce the Angular build at `group-hub/dist/group-hub`.
-- `npm run build:package` – copy manifest, icons, and UI into `dist/extension`.
+
 
 ## Development tips
 - `npm --prefix group-hub run start` launches Angular’s dev server (`http://localhost:4200`) for rapid UI iteration.
