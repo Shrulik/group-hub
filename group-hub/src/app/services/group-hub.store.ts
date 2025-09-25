@@ -71,6 +71,25 @@ export class GroupHubStore {
     return response.result;
   }
 
+  async moveTabsToGroup(groupId, tabIds) {
+    const response = await this.sendMessage({
+      channel: 'tgm',
+      type: 'moveTabsToGroup',
+      groupId,
+      tabIds
+    });
+    return response.result;
+  }
+
+  async restoreTabs(assignments) {
+    const response = await this.sendMessage({
+      channel: 'tgm',
+      type: 'restoreTabsToGroups',
+      assignments
+    });
+    return response.result;
+  }
+
   async loadSnapshotFromStorage() {
     try {
       const stored = await chrome.storage.local.get(GROUPS_SNAPSHOT_KEY);
