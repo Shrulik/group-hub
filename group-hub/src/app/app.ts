@@ -51,6 +51,8 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
   collapsedGroups = signal(new Set());
   statusMessage = signal(null);
   utilityMenuVisible = signal(false);
+  selectedTabIds = signal([]);
+  lastMoveAction = signal(null);
 
   snapshot = computed(() => this.store.snapshot());
   loading = computed(() => this.store.loading());
@@ -63,6 +65,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
   totalVisibleTabs = computed(() =>
     this.filteredGroups().reduce((acc, entry) => acc + entry.group.tabCount, 0)
   );
+  selectionCount = computed(() => this.selectedTabIds().length);
 
   @ViewChild('importInput') importInput;
 
@@ -72,6 +75,9 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     timeStyle: 'short'
   });
   resizeHandler = () => this.updateViewportHeight();
+  focusHandler = () => {
+    void this.loadSelectedTabs();
+  };
 
   async ngOnInit() {
     try {
@@ -85,10 +91,13 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
   ngAfterViewInit() {
     this.updateViewportHeight();
     window.addEventListener('resize', this.resizeHandler);
+    window.addEventListener('focus', this.focusHandler);
+    void this.loadSelectedTabs();
   }
 
   ngOnDestroy() {
     window.removeEventListener('resize', this.resizeHandler);
+    window.removeEventListener('focus', this.focusHandler);
   }
 
   updateViewportHeight() {
@@ -246,6 +255,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
 
   async refresh() {
     await this.store.refresh();
+    void this.loadSelectedTabs();
   }
 
   async triggerExport() {
@@ -311,6 +321,96 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
 
   utilityMenuOpen() {
     return this.utilityMenuVisible();
+  }
+
+  async loadSelectedTabs() {
+    if (typeof chrome === 'undefined' || !chrome.tabs?.query || !chrome.windows?.getLastFocused) {
+      this.selectedTabIds.set([]);
+      return;
+    }
+    try {
+      const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
+      const tabs = await chrome.tabs.query({ windowId: win.id, highlighted: true });
+      const ids = tabs
+        .map((tab) => tab.id)
+        .filter((id) => Number.isFinite(id));
+      this.selectedTabIds.set(ids);
+    } catch (error) {
+      console.debug('[GroupHub] unable to load selected tabs', error);
+      this.selectedTabIds.set([]);
+    }
+  }
+
+  hasSelection() {
+    return this.selectionCount() > 0;
+  }
+
+  selectionAlreadyInGroup(entry) {
+    if (!this.hasSelection()) {
+      return true;
+    }
+    const targetTabs = new Set((entry.group.tabs ?? []).map((tab) => tab.id));
+    const selection = this.selectedTabIds();
+    if (!selection.length) {
+      return true;
+    }
+    for (const id of selection) {
+      if (!targetTabs.has(id)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  async moveSelectionToGroup(groupId, event) {
+    if (event?.stopPropagation) {
+      event.stopPropagation();
+      event.preventDefault();
+    }
+    if (!this.hasSelection()) {
+      this.flashStatus('Select one or more tabs in Chrome first.', 'error');
+      return;
+    }
+    const tabIds = this.selectedTabIds();
+    try {
+      const result = await this.store.moveTabsToGroup(groupId, tabIds);
+      if (result?.previousAssignments?.length) {
+        const movedTabIds = result.movedTabIds ?? tabIds;
+        this.lastMoveAction.set({
+          assignments: result.previousAssignments,
+          movedTabIds
+        });
+        const count = movedTabIds.length;
+        this.flashStatus(`Moved ${count} tab${count === 1 ? '' : 's'} to the group.`, 'success');
+      } else {
+        this.flashStatus('No tabs were moved.', 'error');
+      }
+    } catch (error) {
+      console.error('[GroupHub] move tabs failed', error);
+      this.flashStatus('Unable to move tabs into the group.', 'error');
+    } finally {
+      void this.loadSelectedTabs();
+    }
+  }
+
+  undoAvailable() {
+    return !!this.lastMoveAction();
+  }
+
+  async undoLastMove() {
+    const action = this.lastMoveAction();
+    if (!action) {
+      return;
+    }
+    try {
+      await this.store.restoreTabs(action.assignments);
+      this.flashStatus('Move undone.', 'success');
+      this.lastMoveAction.set(null);
+      void this.loadSelectedTabs();
+    } catch (error) {
+      console.error('[GroupHub] undo move failed', error);
+      this.flashStatus('Unable to undo the move.', 'error');
+    }
   }
 
 
