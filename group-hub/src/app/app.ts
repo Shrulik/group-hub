@@ -380,18 +380,42 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
     const tabIds = this.selectedTabIds();
+
+    // Get previous assignments before moving to ensure we can save the action
+    const previousAssignments = [];
+    for (const id of tabIds) {
+      try {
+        const tab = await chrome.tabs.get(id);
+        previousAssignments.push({
+          tabId: id,
+          previousGroupId: typeof tab.groupId === 'number' ? tab.groupId : -1
+        });
+      } catch (error) {
+        console.warn('[GroupHub] unable to inspect tab before move', id, error);
+      }
+    }
+
+    if (!previousAssignments.length) {
+      this.flashStatus('Unable to access selected tabs.', 'error');
+      return;
+    }
+
+    // Save the action BEFORE moving tabs (in case popup closes)
+    const action = {
+      assignments: previousAssignments,
+      movedTabIds: tabIds,
+      targetGroupId: groupId
+    };
+    this.lastMoveAction.set(action);
+    // Don't await - let it save in background
+    this.store.saveLastMoveAction(action).catch(error => {
+      console.error('[GroupHub] failed to save move action', error);
+    });
+
     try {
       const result = await this.store.moveTabsToGroup(groupId, tabIds);
-      if (result?.previousAssignments?.length) {
-        const movedTabIds = result.movedTabIds ?? tabIds;
-        const action = {
-          assignments: result.previousAssignments,
-          movedTabIds,
-          targetGroupId: groupId
-        };
-        this.lastMoveAction.set(action);
-        await this.store.saveLastMoveAction(action);
-        const count = movedTabIds.length;
+      if (result?.movedTabIds?.length) {
+        const count = result.movedTabIds.length;
         this.flashStatus(`Moved ${count} tab${count === 1 ? '' : 's'} to the group.`, 'success');
       } else {
         this.flashStatus('No tabs were moved.', 'error');
