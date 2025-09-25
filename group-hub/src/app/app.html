@@ -60,6 +60,13 @@
                   (click)="activateGroup(entry.group.id, $event)"
                   [innerHTML]="toggleHighlightTerm(entry.group.title || 'Untitled group')"></button>
                 <div class="group-chip__actions">
+                  @if (hasSelection()) {
+                    <button type="button" class="group-chip__move"
+                      (click)="moveSelectionToGroup(entry.group.id, $event)"
+                      [disabled]="selectionAlreadyInGroup(entry)"
+                      title="Move selected tabs here">⇢
+                    </button>
+                  }
                   <button type="button" class="group-chip__toggle"
                     (click)="toggleGroupExpansion(entry.group.id); $event.stopPropagation()"
                     [title]="isExpanded(entry.group.id) ? 'Hide details' : 'Show details'">
@@ -124,12 +131,19 @@
                       <span class="group__meta-item">Created {{ formatTimestamp(entry.group.createdAt) }}</span>
                     </div>
                   </div>
-                  <div class="group__actions">
-                    <button type="button" class="group__action" (click)="activateGroup(entry.group.id, $event)">
-                      Open
+                <div class="group__actions">
+                  @if (hasSelection()) {
+                    <button type="button" class="group__move"
+                      (click)="moveSelectionToGroup(entry.group.id, $event)"
+                      [disabled]="selectionAlreadyInGroup(entry)"
+                      title="Move selected tabs here">⇢
                     </button>
-                    <button type="button" class="group__toggle" (click)="toggleGroupExpansion(entry.group.id)">
-                      {{ groupToggleLabel(entry.group.id) }}
+                  }
+                  <button type="button" class="group__action" (click)="activateGroup(entry.group.id, $event)">
+                    Open
+                  </button>
+                  <button type="button" class="group__toggle" (click)="toggleGroupExpansion(entry.group.id)">
+                    {{ groupToggleLabel(entry.group.id) }}
                     </button>
                   </div>
                 </header>
@@ -178,7 +192,12 @@
 
   <footer class="footer">
     <span class="footer__summary">{{ infoSummary() }}</span>
-    <button type="button" class="footer__gear" (click)="toggleUtilityMenu()" title="Utilities">⚙︎</button>
+    <div class="footer__actions">
+      @if (undoAvailable()) {
+        <button type="button" class="footer__undo" (click)="undoLastMove()">Undo move</button>
+      }
+      <button type="button" class="footer__gear" (click)="toggleUtilityMenu()" title="Utilities">⚙︎</button>
+    </div>
   </footer>
 
   <input type="file" accept="application/json" class="import-input" #importInput
