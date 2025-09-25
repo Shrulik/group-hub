@@ -23,17 +23,12 @@
       </button>
     </div>
 
-    <label class="sort">
-      <span class="sort__label">Sort</span>
-      <select class="sort__input" [ngModel]="sortMode()" (ngModelChange)="onSortChange($event)">
-        <option value="name-asc">Name (A→Z)</option>
-        <option value="name-desc">Name (Z→A)</option>
-        <option value="created-desc">Created (newest)</option>
-        <option value="created-asc">Created (oldest)</option>
-      </select>
-    </label>
-
-    <button type="button" class="toolbar__gear" (click)="toggleUtilityMenu()" title="Utilities">⚙︎</button>
+    <select class="sort__input" [ngModel]="sortMode()" (ngModelChange)="onSortChange($event)">
+      <option value="name-asc">Name (A→Z)</option>
+      <option value="name-desc">Name (Z→A)</option>
+      <option value="created-desc">Created (newest)</option>
+      <option value="created-asc">Created (oldest)</option>
+    </select>
   </div>
 
   @if (statusMessage(); as status) {
@@ -183,6 +178,7 @@
 
   <footer class="footer">
     <span class="footer__summary">{{ infoSummary() }}</span>
+    <button type="button" class="footer__gear" (click)="toggleUtilityMenu()" title="Utilities">⚙︎</button>
   </footer>
 
   <input type="file" accept="application/json" class="import-input" #importInput

@@ -61,7 +61,7 @@ app-root {
 }
 
 
-.toolbar__gear {
+.footer__gear {
   width: 36px;
   height: 36px;
   border-radius: 10px;
@@ -76,7 +76,7 @@ app-root {
   transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
 }
 
-.toolbar__gear:hover {
+.footer__gear:hover {
   background: var(--gh-accent-soft);
   color: var(--gh-accent);
   border-color: var(--gh-accent);
@@ -118,14 +118,6 @@ app-root {
   color: var(--gh-text-inverse);
 }
 
-.sort {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.78rem;
-  color: var(--gh-text-muted);
-}
-
 .sort__input {
   border: 1px solid var(--gh-border);
   border-radius: var(--gh-radius-sm);
@@ -133,6 +125,8 @@ app-root {
   background: transparent;
   color: inherit;
   cursor: pointer;
+  margin-left: auto;
+  min-width: 150px;
 }
 
 .status {
@@ -488,14 +482,16 @@ app-root {
 
 .footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 12px;
-  grid-auto-flow: dense;
   align-items: center;
   margin-top: auto;
   background: var(--gh-surface);
   padding-top: var(--gh-space-2);
   border-top: 1px solid var(--gh-border);
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
 }
 
 .icon-button,
