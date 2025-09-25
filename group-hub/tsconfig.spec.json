@@ -6,7 +6,11 @@
     "outDir": "./out-tsc/spec",
     "types": [
       "jasmine"
-    ]
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@group-hub/shared/*": ["../src/shared/*"]
+    }
   },
   "include": [
     "src/**/*.ts"
