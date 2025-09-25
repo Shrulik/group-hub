@@ -1,8 +1,10 @@
 // @ts-nocheck
 import {
+  AfterViewInit,
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  OnDestroy,
   OnInit,
   ViewChild,
   computed,
@@ -39,7 +41,7 @@ const COLOR_PALETTE = {
   styleUrl: './app.scss',
   changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class App implements OnInit {
+export class App implements OnInit, AfterViewInit, OnDestroy {
   store = inject(GroupHubStore);
 
   searchTerm = signal('');
@@ -69,6 +71,7 @@ export class App implements OnInit {
     dateStyle: 'medium',
     timeStyle: 'short'
   });
+  resizeHandler = () => this.updateViewportHeight();
 
   async ngOnInit() {
     try {
@@ -76,6 +79,24 @@ export class App implements OnInit {
     } catch (error) {
       console.error('[GroupHub] initialization failed', error);
       this.flashStatus('Chrome extension APIs unavailable.', 'error');
+    }
+  }
+
+  ngAfterViewInit() {
+    this.updateViewportHeight();
+    window.addEventListener('resize', this.resizeHandler);
+  }
+
+  ngOnDestroy() {
+    window.removeEventListener('resize', this.resizeHandler);
+  }
+
+  updateViewportHeight() {
+    try {
+      const height = Math.min(window.innerHeight || 0, 600);
+      document.documentElement.style.setProperty('--gh-popup-height', `${height}px`);
+    } catch (error) {
+      console.debug('[GroupHub] unable to update viewport height', error);
     }
   }
 
