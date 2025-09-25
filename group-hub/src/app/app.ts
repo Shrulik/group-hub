@@ -54,6 +54,8 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
   selectedTabIds = signal([]);
   lastMoveAction = signal(null); // Keep for backward compatibility, but will load from storage
 
+  searchDebounceTimer;
+
   snapshot = computed(() => this.store.snapshot());
   loading = computed(() => this.store.loading());
   errorText = computed(() => this.store.lastError());
@@ -102,13 +104,22 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
 
   ngOnDestroy() {
     window.removeEventListener('focus', this.focusHandler);
+    if (this.searchDebounceTimer) {
+      clearTimeout(this.searchDebounceTimer);
+    }
   }
 
   trackGroup = (_index, entry) => entry.group.id;
   trackTab = (_index, tab) => tab.id;
 
   onSearchChange(term) {
-    this.searchTerm.set(term);
+    if (this.searchDebounceTimer) {
+      clearTimeout(this.searchDebounceTimer);
+    }
+    this.searchDebounceTimer = setTimeout(() => {
+      this.searchTerm.set(term);
+      this.searchDebounceTimer = undefined;
+    }, 200);
   }
 
   onSortChange(mode) {

@@ -4,6 +4,7 @@
       type="search"
       class="toolbar__search"
       placeholder="Search groups or tabs"
+      aria-label="Search groups or tabs"
       [ngModel]="searchTerm()"
       (ngModelChange)="onSearchChange($event)"
     />
@@ -23,7 +24,7 @@
       </button>
     </div>
 
-    <select class="sort__input" [ngModel]="sortMode()" (ngModelChange)="onSortChange($event)">
+    <select class="sort__input" aria-label="Sort groups" [ngModel]="sortMode()" (ngModelChange)="onSortChange($event)">
       <option value="name-asc">Name (A→Z)</option>
       <option value="name-desc">Name (Z→A)</option>
       <option value="created-desc">Created (newest)</option>
@@ -186,8 +187,8 @@
   </div>
 
   <div class="utility-menu" *ngIf="utilityMenuOpen()">
-    <button type="button" class="utility-menu__btn" (click)="triggerExport()">Export</button>
-    <button type="button" class="utility-menu__btn" (click)="openImport()">Import</button>
+    <button type="button" class="utility-menu__btn" aria-label="Export tab groups" (click)="triggerExport()">Export</button>
+    <button type="button" class="utility-menu__btn" aria-label="Import tab groups" (click)="openImport()">Import</button>
   </div>
 
   <footer class="footer">
