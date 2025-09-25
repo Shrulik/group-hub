@@ -57,6 +57,7 @@ app-root {
   background: transparent;
   font-size: 0.92rem;
   transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  height: 34px;
 }
 
 
@@ -100,6 +101,7 @@ app-root {
   overflow: hidden;
   background: var(--gh-surface);
   margin: 0 auto;
+  height: 34px;
 }
 
 .view-toggle__btn {
@@ -126,6 +128,7 @@ app-root {
   cursor: pointer;
   margin-left: auto;
   min-width: 150px;
+  height: 34px;
 }
 
 .status {
