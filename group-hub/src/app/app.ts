@@ -77,6 +77,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
   });
 
   @ViewChild('importInput') importInput;
+  @ViewChild('searchInput') searchInput: ElementRef<HTMLInputElement>;
 
   statusTimeout;
   dateFormatter = new Intl.DateTimeFormat(undefined, {
@@ -100,6 +101,10 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
   ngAfterViewInit() {
     window.addEventListener('focus', this.focusHandler);
     void this.loadSelectedTabs();
+    // Focus search input for immediate typing
+    if (this.searchInput?.nativeElement) {
+      this.searchInput.nativeElement.focus();
+    }
   }
 
   ngOnDestroy() {
