@@ -5,6 +5,8 @@ import {
   normalizeGroupColor
 } from '../shared/constants.js';
 
+const TAB_GROUP_ID_NONE = -1;
+
 const REFRESH_DEBOUNCE_MS = 150;
 
 let metadata = {};
@@ -264,6 +266,84 @@ async function activateGroup(groupId) {
   };
 }
 
+async function moveTabsToGroup(targetGroupId, tabIds) {
+  if (!Array.isArray(tabIds) || tabIds.length === 0 || typeof targetGroupId !== 'number') {
+    return { movedTabIds: [], previousAssignments: [] };
+  }
+
+  const previousAssignments = [];
+  const validTabIds = [];
+
+  for (const id of tabIds) {
+    try {
+      const tab = await chrome.tabs.get(id);
+      previousAssignments.push({
+        tabId: id,
+        previousGroupId: typeof tab.groupId === 'number' ? tab.groupId : TAB_GROUP_ID_NONE
+      });
+      validTabIds.push(id);
+    } catch (error) {
+      console.warn('[GroupHub] unable to inspect tab before move', id, error);
+    }
+  }
+
+  if (!validTabIds.length) {
+    return { movedTabIds: [], previousAssignments: [] };
+  }
+
+  await chrome.tabs.group({ tabIds: validTabIds, groupId: targetGroupId });
+  await refreshSnapshot('move tabs to group');
+
+  return {
+    movedTabIds: validTabIds,
+    previousAssignments
+  };
+}
+
+async function restoreTabsToGroups(assignments) {
+  if (!Array.isArray(assignments) || !assignments.length) {
+    return { restoredTabIds: [] };
+  }
+
+  const toUngroup = [];
+  const groupedMoves = new Map();
+
+  for (const entry of assignments) {
+    const tabId = entry?.tabId;
+    const previousGroupId = entry?.previousGroupId;
+    if (!Number.isFinite(tabId)) {
+      continue;
+    }
+    if (!Number.isFinite(previousGroupId) || previousGroupId === TAB_GROUP_ID_NONE) {
+      toUngroup.push(tabId);
+    } else {
+      if (!groupedMoves.has(previousGroupId)) {
+        groupedMoves.set(previousGroupId, []);
+      }
+      groupedMoves.get(previousGroupId).push(tabId);
+    }
+  }
+
+  if (toUngroup.length) {
+    try {
+      await chrome.tabs.ungroup(toUngroup);
+    } catch (error) {
+      console.warn('[GroupHub] failed to ungroup tabs during undo', error);
+    }
+  }
+
+  for (const [groupId, ids] of groupedMoves.entries()) {
+    try {
+      await chrome.tabs.group({ tabIds: ids, groupId });
+    } catch (error) {
+      console.warn('[GroupHub] failed to restore tabs to group', groupId, error);
+    }
+  }
+
+  await refreshSnapshot('restore tabs to groups');
+  return { restoredTabIds: assignments.map((entry) => entry.tabId) };
+}
+
 function registerListeners() {
   if (listenersRegistered) {
     return;
@@ -310,6 +390,16 @@ function registerListeners() {
           case 'refresh': {
             const snapshot = await refreshSnapshot('message refresh');
             sendResponse({ snapshot });
+            break;
+          }
+          case 'moveTabsToGroup': {
+            const result = await moveTabsToGroup(message.groupId, message.tabIds);
+            sendResponse({ result });
+            break;
+          }
+          case 'restoreTabsToGroups': {
+            const result = await restoreTabsToGroups(message.assignments);
+            sendResponse({ result });
             break;
           }
           case 'export': {
