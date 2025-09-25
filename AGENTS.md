@@ -14,6 +14,8 @@
 - **Run single test**: `npm --prefix group-hub run test -- --include="**/file.spec.ts" --watch=false`
 - **Format code**: `npx prettier --write group-hub/src/**/*.{ts,html,scss}`
 
+**Important**: Always run builds from the project root using `npm run build` to ensure the extension is fully packaged and ready for loading in Chrome. Running inner builds (e.g., `cd group-hub && npm run build`) only updates intermediate files and won't reflect in the loaded extension.
+
 Use `npm --prefix group-hub` for commands in the Angular subfolder to avoid directory changes. Run builds from the project root to prevent leftover intermediate `dist/` folders (e.g., `group-hub/dist/group-hub/`). The full build ensures a clean `dist/extension/` output.
 
 ## Code Style Guidelines
