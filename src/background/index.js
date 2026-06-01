@@ -1,9 +1,19 @@
 import {
+  BACKUP_ALARM_NAME,
+  BACKUP_ALARM_PERIOD_MINUTES,
+  BACKUP_SETTINGS_KEY,
   GROUP_METADATA_KEY,
   GROUPS_SNAPSHOT_KEY,
+  RESTORE_MODE_APPEND,
+  RESTORE_MODE_REPLACE,
   SNAPSHOT_SCHEMA_VERSION,
   normalizeGroupColor
 } from '../shared/constants.js';
+import {
+  buildExportPayload,
+  isValidRestoreMode,
+  normalizeBackupPayload
+} from '../shared/backup-format.js';
 
 const TAB_GROUP_ID_NONE = -1;
 
@@ -151,76 +161,159 @@ function scheduleRefresh(reason) {
 
 async function handleExport() {
   const snapshot = currentSnapshot ?? (await refreshSnapshot('export request rebuild'));
-  const groups = snapshot.groups.map((group) => ({
-    title: group.title,
-    color: group.color,
-    createdAt: group.createdAt,
-    tabs: group.tabs.map((tab) => ({
-      title: tab.title,
-      url: tab.url,
-      pinned: tab.pinned
-    }))
-  }));
-
-  return {
-    schemaVersion: SNAPSHOT_SCHEMA_VERSION,
-    generatedAt: Date.now(),
-    groups
-  };
+  return buildExportPayload(snapshot);
 }
 
-async function handleImport(payload) {
-  if (!payload || !Array.isArray(payload.groups)) {
-    throw new Error('Invalid import payload');
+async function handleImport(payload, mode = RESTORE_MODE_APPEND) {
+  if (!isValidRestoreMode(mode)) {
+    throw new Error('Invalid restore mode');
   }
 
-  const targetWindow = await chrome.windows.getLastFocused({ populate: false });
-  let createdGroups = 0;
-  let createdTabs = 0;
+  const normalized = normalizeBackupPayload(payload);
+  const replaceTabIds = mode === RESTORE_MODE_REPLACE ? await collectCurrentGroupedTabIds() : [];
+  const result = await createGroupsFromBackup(normalized);
 
-  for (const group of payload.groups) {
-    if (!group.tabs?.length) {
-      continue;
-    }
-
-    const tabIds = [];
-    for (const tab of group.tabs) {
-      try {
-        const created = await chrome.tabs.create({
-          windowId: targetWindow.id,
-          url: tab.url,
-          active: false,
-          pinned: Boolean(tab.pinned)
-        });
-        if (created.id !== undefined) {
-          tabIds.push(created.id);
-          createdTabs += 1;
-        }
-      } catch (error) {
-        console.error('[GroupHub] failed to create tab during import', tab.url, error);
-      }
-    }
-
-    if (!tabIds.length) {
-      continue;
-    }
-
-    try {
-      const groupId = await chrome.tabs.group({ tabIds });
-      await chrome.tabGroups.update(groupId, {
-        title: group.title,
-        color: normalizeGroupColor(group.color)
-      });
-      ensureGroupMetadata(groupId, group.createdAt ?? Date.now());
-      createdGroups += 1;
-    } catch (error) {
-      console.error('[GroupHub] failed to create group during import', error);
+  if (mode === RESTORE_MODE_REPLACE) {
+    if (result.createdTabs === normalized.tabCount && replaceTabIds.length > 0) {
+      await chrome.tabs.remove(replaceTabIds);
+      result.removedTabs = replaceTabIds.length;
+    } else if (result.createdTabs !== normalized.tabCount) {
+      result.partial = true;
     }
   }
 
   await refreshSnapshot('import completed');
 
-  return { createdGroups, createdTabs };
+  return result;
+}
+
+async function collectCurrentGroupedTabIds() {
+  const groups = await chrome.tabGroups.query({});
+  const ids = [];
+  for (const group of groups) {
+    const tabs = await chrome.tabs.query({ groupId: group.id });
+    for (const tab of tabs) {
+      if (typeof tab.id === 'number') {
+        ids.push(tab.id);
+      }
+    }
+  }
+  return ids;
+}
+
+async function createGroupsFromBackup(payload) {
+  const result = {
+    createdGroups: 0,
+    createdTabs: 0,
+    createdWindows: 0,
+    removedTabs: 0,
+    partial: false
+  };
+
+  for (const windowEntry of payload.windows) {
+    const groupsWithTabs = windowEntry.groups.filter((group) => group.tabs.length > 0);
+    if (!groupsWithTabs.length) {
+      continue;
+    }
+
+    const createdWindow = await chrome.windows.create({ focused: false });
+    result.createdWindows += 1;
+    const windowId = createdWindow.id;
+    if (!Number.isFinite(windowId)) {
+      result.partial = true;
+      continue;
+    }
+    const placeholderTabIds = (createdWindow.tabs ?? [])
+      .map((tab) => tab.id)
+      .filter((id) => typeof id === 'number');
+    const windowTabIds = [];
+
+    for (const group of groupsWithTabs) {
+      const tabIds = [];
+      for (const tab of group.tabs) {
+        try {
+          const created = await chrome.tabs.create({
+            windowId,
+            url: tab.url,
+            active: false,
+            pinned: Boolean(tab.pinned)
+          });
+          if (created.id !== undefined) {
+            tabIds.push(created.id);
+            windowTabIds.push(created.id);
+            result.createdTabs += 1;
+          }
+        } catch (error) {
+          result.partial = true;
+          console.error('[GroupHub] failed to create tab during import', tab.url, error);
+        }
+      }
+
+      if (!tabIds.length) {
+        continue;
+      }
+
+      try {
+        const groupId = await chrome.tabs.group({ tabIds });
+        await chrome.tabGroups.update(groupId, {
+          title: group.title,
+          color: normalizeGroupColor(group.color),
+          collapsed: Boolean(group.collapsed)
+        });
+        ensureGroupMetadata(groupId, group.createdAt ?? Date.now());
+        result.createdGroups += 1;
+      } catch (error) {
+        result.partial = true;
+        console.error('[GroupHub] failed to create group during import', error);
+      }
+    }
+
+    if (windowTabIds.length && placeholderTabIds.length) {
+      try {
+        await chrome.tabs.remove(placeholderTabIds);
+      } catch (error) {
+        console.debug('[GroupHub] failed to remove import placeholder tab', error);
+      }
+    }
+  }
+
+  return result;
+}
+
+async function saveBackupSettings(settings) {
+  const stored = await chrome.storage.local.get({ [BACKUP_SETTINGS_KEY]: {} });
+  await chrome.storage.local.set({
+    [BACKUP_SETTINGS_KEY]: {
+      ...stored[BACKUP_SETTINGS_KEY],
+      ...settings,
+      updatedAt: Date.now()
+    }
+  });
+}
+
+async function markBackupDue(reason) {
+  await saveBackupSettings({
+    backupDue: true,
+    backupDueAt: Date.now(),
+    backupDueReason: reason
+  });
+}
+
+async function markBackupDueSafely(reason) {
+  try {
+    await markBackupDue(reason);
+  } catch (error) {
+    console.error('[GroupHub] failed to mark backup due', error);
+  }
+}
+
+async function ensureBackupAlarm() {
+  if (!chrome.alarms?.create) {
+    return;
+  }
+  await chrome.alarms.create(BACKUP_ALARM_NAME, {
+    periodInMinutes: BACKUP_ALARM_PERIOD_MINUTES
+  });
 }
 
 async function activateGroup(groupId) {
@@ -368,6 +461,12 @@ function registerListeners() {
   }
   listenersRegistered = true;
 
+  chrome.alarms?.onAlarm.addListener((alarm) => {
+    if (alarm.name === BACKUP_ALARM_NAME) {
+      void markBackupDueSafely('alarm');
+    }
+  });
+
   chrome.tabGroups.onCreated.addListener((group) => {
     ensureGroupMetadata(group.id);
     scheduleRefresh('group created');
@@ -426,7 +525,7 @@ function registerListeners() {
             break;
           }
           case 'import': {
-            const result = await handleImport(message.payload);
+            const result = await handleImport(message.payload, message.mode);
             sendResponse({ result });
             break;
           }
@@ -453,6 +552,7 @@ function registerListeners() {
 async function bootstrap() {
   await loadInitialState();
   registerListeners();
+  await ensureBackupAlarm();
   await refreshSnapshot('initial bootstrap');
 }
 

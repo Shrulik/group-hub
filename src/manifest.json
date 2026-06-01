@@ -3,7 +3,7 @@
   "name": "Group Hub",
   "version": "0.1.0",
   "description": "Manage Chrome tab groups with sorting, filtering, and export/import capabilities.",
-  "permissions": ["tabGroups", "tabs", "storage"],
+  "permissions": ["tabGroups", "tabs", "storage", "alarms"],
   "background": {
     "service_worker": "background.js",
     "type": "module"

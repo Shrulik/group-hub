@@ -13,6 +13,13 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import {
+  getBackupStatusForHandle,
+  readBackupFile,
+  writeRotatingBackup
+} from '@group-hub/shared/backup-files';
+import { getBackupDirectoryHandle, setBackupDirectoryHandle } from '@group-hub/shared/backup-storage';
+import { BACKUP_SETTINGS_KEY } from '@group-hub/shared/constants';
 import { GroupHubStore } from './services/group-hub.store';
 
 const VIEW_MODE = {
@@ -51,6 +58,10 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
   collapsedGroups = signal(new Set());
   statusMessage = signal(null);
   utilityMenuVisible = signal(false);
+  backupPanelVisible = signal(false);
+  backupStatus = signal(null);
+  restoreChoice = signal(null);
+  pendingImportPayload = signal(null);
   selectedTabIds = signal([]);
   lastMoveAction = signal(null); // Keep for backward compatibility, but will load from storage
 
@@ -75,6 +86,14 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     const groupName = this.getGroupName(action.targetGroupId) || 'Unknown group';
     return `${count} tab${count === 1 ? '' : 's'} moved to ${groupName}`;
   });
+  backupCanRestore = computed(() => Boolean(this.backupStatus()?.latestBackup));
+  backupRestoreTitle = computed(() => {
+    const latestBackup = this.backupStatus()?.latestBackup;
+    if (!latestBackup) {
+      return 'No backup available';
+    }
+    return `Will restore from last backup at ${this.formatTimestamp(latestBackup.generatedAt)}`;
+  });
 
   @ViewChild('importInput') importInput;
   @ViewChild('searchInput') searchInput: ElementRef<HTMLInputElement>;
@@ -92,6 +111,8 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     try {
       await this.store.init();
       await this.loadLastMoveAction();
+      await this.loadBackupStatus();
+      void this.ensureBackupDue();
     } catch (error) {
       console.error('[GroupHub] initialization failed', error);
       this.flashStatus('Chrome extension APIs unavailable.', 'error');
@@ -298,14 +319,213 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     try {
       const text = await file.text();
       const payload = JSON.parse(text);
-      await this.store.importData(payload);
-      this.flashStatus('Import completed.', 'success');
+      this.pendingImportPayload.set(payload);
+      this.restoreChoice.set('import');
     } catch (error) {
       console.error('[GroupHub] import failed', error);
       this.flashStatus('Import failed. Check the file and retry.', 'error');
     } finally {
       input.value = '';
     }
+  }
+
+  openBackupRestore() {
+    if (!this.backupCanRestore()) {
+      this.flashStatus('No backup is available yet.', 'error');
+      return;
+    }
+    this.restoreChoice.set('backup');
+  }
+
+  closeRestoreChoice() {
+    this.restoreChoice.set(null);
+    this.pendingImportPayload.set(null);
+  }
+
+  async runRestoreChoice(mode) {
+    const source = this.restoreChoice();
+    try {
+      let result;
+      if (source === 'backup') {
+        const payload = await this.readLatestBackupPayload();
+        result = await this.store.importData(payload, mode);
+        await this.loadBackupStatus();
+      } else {
+        result = await this.store.importData(this.pendingImportPayload(), mode);
+      }
+      this.restoreChoice.set(null);
+      this.pendingImportPayload.set(null);
+      await this.refresh();
+      this.flashStatus(this.restoreResultText(result, mode), result?.partial ? 'error' : 'success');
+    } catch (error) {
+      console.error('[GroupHub] restore failed', error);
+      this.flashStatus('Restore failed. Check the backup and retry.', 'error');
+    }
+  }
+
+  restoreResultText(result, mode) {
+    const action = mode === 'replace' ? 'Replaced' : 'Appended';
+    const groups = result?.createdGroups ?? 0;
+    const tabs = result?.createdTabs ?? 0;
+    if (result?.partial) {
+      return `${action} ${groups} groups and ${tabs} tabs. Some tabs were skipped.`;
+    }
+    return `${action} ${groups} groups and ${tabs} tabs.`;
+  }
+
+  async loadBackupStatus() {
+    try {
+      this.backupStatus.set(await this.readBackupStatus());
+    } catch (error) {
+      console.error('[GroupHub] backup status failed', error);
+    }
+  }
+
+  async ensureBackupDue() {
+    try {
+      const status = await this.writeBackupFromPage({ force: false });
+      this.backupStatus.set(status);
+    } catch (error) {
+      console.error('[GroupHub] automatic backup failed', error);
+      await this.loadBackupStatus();
+    }
+  }
+
+  toggleBackupPanel() {
+    this.backupPanelVisible.update((open) => !open);
+  }
+
+  async chooseBackupFolder() {
+    if (!('showDirectoryPicker' in window)) {
+      this.flashStatus('Backup folders are not supported in this browser.', 'error');
+      return;
+    }
+    try {
+      const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      const allowed = await this.ensureBackupPermission(handle);
+      if (!allowed) {
+        this.flashStatus('Backup folder permission was not granted.', 'error');
+        return;
+      }
+      await setBackupDirectoryHandle(handle);
+      this.backupStatus.set(await this.writeBackupFromPage({ force: true }));
+      this.flashStatus('Backup folder saved.', 'success');
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        return;
+      }
+      console.error('[GroupHub] choose backup folder failed', error);
+      this.flashStatus(this.errorMessage(error, 'Backup setup failed.'), 'error');
+    }
+  }
+
+  async runBackupNow() {
+    try {
+      const handle = await getBackupDirectoryHandle();
+      if (!handle) {
+        this.flashStatus('Choose a backup folder first.', 'error');
+        return;
+      }
+      const allowed = await this.ensureBackupPermission(handle);
+      if (!allowed) {
+        this.flashStatus('Backup folder permission was not granted.', 'error');
+        return;
+      }
+      this.backupStatus.set(await this.writeBackupFromPage({ force: true }));
+      this.flashStatus('Backup saved.', 'success');
+    } catch (error) {
+      console.error('[GroupHub] backup failed', error);
+      this.flashStatus(this.errorMessage(error, 'Backup failed.'), 'error');
+    }
+  }
+
+  async readBackupStatus() {
+    const handle = await getBackupDirectoryHandle();
+    const settings = await this.readBackupSettings();
+    return getBackupStatusForHandle(handle, settings);
+  }
+
+  async writeBackupFromPage({ force }) {
+    const handle = await getBackupDirectoryHandle();
+    if (!handle) {
+      return getBackupStatusForHandle(null, await this.readBackupSettings());
+    }
+
+    const payload = await this.store.exportData();
+    const result = await writeRotatingBackup(handle, payload, { force });
+    const latestBackup = result.status.latestBackup;
+    await this.saveBackupSettings({
+      folderName: handle.name,
+      lastBackupAt: latestBackup?.generatedAt ?? null,
+      lastBackupDate: latestBackup?.backupDate ?? null,
+      lastBackupFile: latestBackup?.fileName ?? null,
+      backupDue: false,
+      lastError: null
+    });
+    return result.status;
+  }
+
+  async readLatestBackupPayload() {
+    const handle = await getBackupDirectoryHandle();
+    const status = await getBackupStatusForHandle(handle, await this.readBackupSettings());
+    if (status.permission !== 'granted' || !status.latestBackup) {
+      throw new Error('No readable backup is available.');
+    }
+    return readBackupFile(handle, status.latestBackup.fileName);
+  }
+
+  async readBackupSettings() {
+    const stored = await chrome.storage.local.get({ [BACKUP_SETTINGS_KEY]: {} });
+    return stored[BACKUP_SETTINGS_KEY] ?? {};
+  }
+
+  async saveBackupSettings(settings) {
+    const existing = await this.readBackupSettings();
+    await chrome.storage.local.set({
+      [BACKUP_SETTINGS_KEY]: {
+        ...existing,
+        ...settings,
+        updatedAt: Date.now()
+      }
+    });
+  }
+
+  errorMessage(error, fallback) {
+    const message = typeof error === 'string' ? error : error?.message;
+    if (!message) {
+      return fallback;
+    }
+    return `${fallback} ${message}`;
+  }
+
+  async ensureBackupPermission(handle) {
+    if (!handle?.queryPermission || !handle?.requestPermission) {
+      return false;
+    }
+    const options = { mode: 'readwrite' };
+    if ((await handle.queryPermission(options)) === 'granted') {
+      return true;
+    }
+    return (await handle.requestPermission(options)) === 'granted';
+  }
+
+  backupStatusText() {
+    const status = this.backupStatus();
+    if (!status?.configured) {
+      return 'No backup folder selected.';
+    }
+    if (status.permission !== 'granted') {
+      return `Permission needed for ${status.folderName ?? 'backup folder'}.`;
+    }
+    return `Folder: ${status.folderName}`;
+  }
+
+  backupLastText() {
+    const latestBackup = this.backupStatus()?.latestBackup;
+    if (!latestBackup) {
+      return 'No backups written yet.';
+    }
+    return `Last backup: ${this.formatTimestamp(latestBackup.generatedAt)} · ${latestBackup.groupCount} groups · ${latestBackup.tabCount} tabs`;
   }
 
   formatTimestamp(value) {

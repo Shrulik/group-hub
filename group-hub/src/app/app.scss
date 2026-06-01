@@ -649,7 +649,68 @@ app-root {
   font-size: 0.78rem;
 }
 
-.utility-menu__btn:hover {
+.utility-menu__btn:hover:not(:disabled) {
   background: var(--gh-accent-soft);
   color: var(--gh-accent);
+}
+
+.utility-menu__btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.utility-menu__btn--danger {
+  color: var(--gh-status-error-text);
+}
+
+.utility-menu__icon {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  background: transparent;
+  color: var(--gh-text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.utility-menu__icon:hover {
+  background: var(--gh-accent-soft);
+  color: var(--gh-accent);
+}
+
+.backup-panel,
+.restore-panel {
+  background: var(--gh-elevated);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  padding: 10px;
+  box-shadow: var(--gh-shadow-soft);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.backup-panel__status,
+.restore-panel__copy {
+  min-width: 0;
+  color: var(--gh-text-secondary);
+  font-size: 0.76rem;
+}
+
+.backup-panel__status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.backup-panel__actions,
+.restore-panel__actions {
+  display: inline-flex;
+  gap: 8px;
+  flex-shrink: 0;
 }

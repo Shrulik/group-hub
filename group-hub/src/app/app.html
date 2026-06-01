@@ -190,7 +190,74 @@
   <div class="utility-menu" *ngIf="utilityMenuOpen()">
     <button type="button" class="utility-menu__btn" aria-label="Export tab groups" (click)="triggerExport()">Export</button>
     <button type="button" class="utility-menu__btn" aria-label="Import tab groups" (click)="openImport()">Import</button>
+    <button
+      type="button"
+      class="utility-menu__btn"
+      aria-label="Restore tab groups from backup"
+      [title]="backupRestoreTitle()"
+      [disabled]="!backupCanRestore()"
+      (click)="openBackupRestore()"
+    >
+      Restore
+    </button>
+    <button
+      type="button"
+      class="utility-menu__icon"
+      aria-label="Backup config"
+      title="Backup config"
+      (click)="toggleBackupPanel()"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M14 17H5" />
+        <path d="M19 7h-9" />
+        <circle cx="17" cy="17" r="3" />
+        <circle cx="7" cy="7" r="3" />
+      </svg>
+    </button>
   </div>
+
+  @if (backupPanelVisible()) {
+    <section class="backup-panel">
+      <div class="backup-panel__status">
+        <span>{{ backupStatusText() }}</span>
+        <span>{{ backupLastText() }}</span>
+      </div>
+      <div class="backup-panel__actions">
+        <button type="button" class="utility-menu__btn" (click)="chooseBackupFolder()">Choose folder</button>
+        <button type="button" class="utility-menu__btn" (click)="runBackupNow()">Backup now</button>
+      </div>
+    </section>
+  }
+
+  @if (restoreChoice(); as source) {
+    <section class="restore-panel">
+      <div class="restore-panel__copy">
+        @if (source === 'backup') {
+          Restore from backup
+        } @else {
+          Import tab groups
+        }
+      </div>
+      <div class="restore-panel__actions">
+        <button type="button" class="utility-menu__btn" (click)="runRestoreChoice('append')">Append</button>
+        <button type="button" class="utility-menu__btn utility-menu__btn--danger" (click)="runRestoreChoice('replace')">
+          Replace
+        </button>
+        <button type="button" class="utility-menu__btn" (click)="closeRestoreChoice()">Cancel</button>
+      </div>
+    </section>
+  }
 
   <footer class="footer">
     <span class="footer__summary">{{ infoSummary() }}</span>

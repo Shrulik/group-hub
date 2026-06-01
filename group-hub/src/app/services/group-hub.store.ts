@@ -53,11 +53,12 @@ export class GroupHubStore {
     return response.data;
   }
 
-  async importData(payload) {
+  async importData(payload, mode = 'append') {
     const response = await this.sendMessage({
       channel: 'tgm',
       type: 'import',
-      payload
+      payload,
+      mode
     });
     return response.result;
   }
