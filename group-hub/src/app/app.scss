@@ -755,3 +755,13 @@ app-root {
   padding: 0;
   text-align: left;
 }
+
+.storage-panel__details {
+  color: var(--gh-text-secondary);
+  font-size: 0.76rem;
+}
+
+.storage-panel__details summary {
+  cursor: pointer;
+  margin-bottom: 4px;
+}

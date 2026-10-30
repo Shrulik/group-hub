@@ -334,6 +334,24 @@
             <li>The group with your current tab stays</li>
           }
         </ul>
+        @if (panel.preview.recentGroups.length) {
+          <details class="storage-panel__details">
+            <summary>Groups that stay, oldest activity first</summary>
+            <ul class="storage-panel__list">
+              @for (group of panel.preview.recentGroups; track group.groupId) {
+                <li>
+                  {{ group.title || 'Untitled group' }}: {{ group.seenTabCount }} of {{ count(group.tabCount, 'tab') }},
+                  {{ formatTimestamp(group.lastSeenAt) }}
+                  @if (group.visibleTabOnly) {
+                    (only the tab its window is showing)
+                  } @else if (group.recorded) {
+                    (activity seen by Group Hub)
+                  }
+                </li>
+              }
+            </ul>
+          </details>
+        }
         <div class="restore-panel__actions">
           <button type="button" class="utility-menu__btn" (click)="confirmStorageRun()">Send to storage</button>
           <button type="button" class="utility-menu__btn" (click)="closeStoragePanel()">Cancel</button>

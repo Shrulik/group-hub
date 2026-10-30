@@ -142,6 +142,7 @@ export function planStorageRun({
   const skippedCurrentGroups = [];
   let windowsKeptOpen = 0;
   let recentGroupCount = 0;
+  const recentGroups = [];
   let recentGroupTabCount = 0;
   let recentlySeenTabCount = 0;
   let visibleTabOnlyGroupCount = 0;
@@ -182,6 +183,15 @@ export function planStorageRun({
         const seenTabs = groupTabs.filter((tab) => now - lastSeen(tab) < STALE_AFTER_MS);
         const recordedRecently = now - (activity[groupId] ?? 0) < STALE_AFTER_MS;
         recentGroupCount += 1;
+        recentGroups.push({
+          groupId,
+          title: group.title ?? '',
+          tabCount: groupTabs.length,
+          seenTabCount: seenTabs.length,
+          lastSeenAt: Math.max(activity[groupId] ?? 0, ...groupTabs.map(lastSeen)),
+          recorded: recordedRecently,
+          visibleTabOnly: !recordedRecently && seenTabs.length === 1 && seenTabs[0].active
+        });
         recentGroupTabCount += groupTabs.length;
         recentlySeenTabCount += seenTabs.length;
         if (!recordedRecently && seenTabs.length === 1 && seenTabs[0].active) {
@@ -251,6 +261,7 @@ export function planStorageRun({
     closingWindowIds,
     windowsKeptOpen,
     recentGroupCount,
+    recentGroups: recentGroups.sort((a, b) => a.lastSeenAt - b.lastSeenAt),
     recentGroupTabCount,
     recentlySeenTabCount,
     visibleTabOnlyGroupCount,

@@ -92,6 +92,10 @@ describe('storage plan', () => {
     expect(result.recentlySeenTabCount).toBe(3);
     expect(result.visibleTabOnlyGroupCount).toBe(1);
     expect(result.untouchedWindowCount).toBe(3);
+    expect(result.recentGroups.map((entry) => [entry.groupId, entry.seenTabCount, entry.tabCount])).toEqual(
+      jasmine.arrayWithExactContents([[10, 1, 5], [11, 2, 3]])
+    );
+    expect(result.recentGroups.find((entry) => entry.groupId === 10).visibleTabOnly).toBeTrue();
   });
 
   it('uses recorded activity when lastAccessed is old', () => {
