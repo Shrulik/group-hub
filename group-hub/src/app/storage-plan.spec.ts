@@ -80,6 +80,20 @@ describe('storage plan', () => {
     expect(result.moves.some((move) => move.groupId === 60)).toBeFalse();
   });
 
+  it('explains which groups stay and how many tabs were really seen', () => {
+    const windows = [
+      { id: 1, tabs: [tab({ groupId: 10, active: true, lastAccessed: FRESH }), ...tabsInGroup(10, 4)] },
+      { id: 2, tabs: [tab({ groupId: 11, lastAccessed: FRESH }), tab({ groupId: 11, lastAccessed: FRESH }), ...tabsInGroup(11, 1)] },
+      { id: 3, tabs: [tab()] }
+    ];
+    const result = plan(windows, [group(10), group(11)]);
+    expect(result.recentGroupCount).toBe(2);
+    expect(result.recentGroupTabCount).toBe(8);
+    expect(result.recentlySeenTabCount).toBe(3);
+    expect(result.visibleTabOnlyGroupCount).toBe(1);
+    expect(result.untouchedWindowCount).toBe(3);
+  });
+
   it('uses recorded activity when lastAccessed is old', () => {
     const windows = [{ id: 1, tabs: tabsInGroup(10, 2) }];
     expect(plan(windows, [group(10)], { activity: { 10: FRESH } }).moves).toEqual([]);

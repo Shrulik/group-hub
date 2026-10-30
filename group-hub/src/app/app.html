@@ -306,7 +306,7 @@
           Unsaved text in a loaded tab may be lost. A backup is saved first. Use a group's arrow to bring it back.
         </p>
         <ul class="storage-panel__list">
-          <li>{{ count(panel.preview.groupCount, 'group') }}, {{ count(panel.preview.tabCount, 'tab') }}</li>
+          <li>{{ count(panel.preview.groupCount, 'group') }} with {{ count(panel.preview.groupedTabCount, 'tab') }} move</li>
           @if (panel.preview.looseTabCount) {
             <li>{{ count(panel.preview.looseTabCount, 'ungrouped tab') }} go into numbered Loose groups, one per window</li>
           }
@@ -316,7 +316,16 @@
             <li>{{ count(panel.preview.windowsKeptOpen, 'window') }} will stay open with the remaining tabs</li>
           }
           @if (panel.preview.recentGroupCount) {
-            <li>{{ count(panel.preview.recentGroupCount, 'group') }} stay because of recent activity</li>
+            <li>
+              {{ count(panel.preview.recentGroupCount, 'group') }} with {{ count(panel.preview.recentGroupTabCount, 'tab') }} stay,
+              because {{ count(panel.preview.recentlySeenTabCount, 'tab') }} in them had recent activity
+            </li>
+            @if (panel.preview.visibleTabOnlyGroupCount) {
+              <li>{{ count(panel.preview.visibleTabOnlyGroupCount, 'group') }} of those stay only because of the tab their window is showing</li>
+            }
+          }
+          @if (panel.preview.untouchedWindowCount) {
+            <li>{{ count(panel.preview.untouchedWindowCount, 'other window') }} won't change</li>
           }
           @if (panel.preview.restartBurstTabCount) {
             <li>{{ count(panel.preview.restartBurstTabCount, 'tab') }} ignored as recent because a Chrome restart touched them</li>

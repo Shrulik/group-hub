@@ -142,6 +142,9 @@ export function planStorageRun({
   const skippedCurrentGroups = [];
   let windowsKeptOpen = 0;
   let recentGroupCount = 0;
+  let recentGroupTabCount = 0;
+  let recentlySeenTabCount = 0;
+  let visibleTabOnlyGroupCount = 0;
   let looseCounter = highestLooseNumber(groups);
 
   for (const window of normalWindows) {
@@ -176,7 +179,14 @@ export function planStorageRun({
         skippedCurrentGroups.push(groupId);
       }
       if (mode === STORAGE_MODE_STALE && !stale) {
+        const seenTabs = groupTabs.filter((tab) => now - lastSeen(tab) < STALE_AFTER_MS);
+        const recordedRecently = now - (activity[groupId] ?? 0) < STALE_AFTER_MS;
         recentGroupCount += 1;
+        recentGroupTabCount += groupTabs.length;
+        recentlySeenTabCount += seenTabs.length;
+        if (!recordedRecently && seenTabs.length === 1 && seenTabs[0].active) {
+          visibleTabOnlyGroupCount += 1;
+        }
       }
       if (mode === STORAGE_MODE_STALE && (!stale || holdsCurrentTab)) {
         allGroupsMove = false;
@@ -241,6 +251,11 @@ export function planStorageRun({
     closingWindowIds,
     windowsKeptOpen,
     recentGroupCount,
+    recentGroupTabCount,
+    recentlySeenTabCount,
+    visibleTabOnlyGroupCount,
+    untouchedWindowCount:
+      normalWindows.length - storageWindows.length - closingWindowIds.length - windowsKeptOpen,
     restartBurstTabCount: normalWindows
       .flatMap((window) => window.tabs ?? [])
       .filter((tab) => burstTabIds.has(tab.id) && now - (tab.lastAccessed ?? 0) < STALE_AFTER_MS).length,
@@ -250,6 +265,9 @@ export function planStorageRun({
     groupCount: moves.filter((move) => move.kind === 'group').length,
     looseTabCount: moves
       .filter((move) => move.kind === 'loose')
+      .reduce((total, move) => total + move.tabCount, 0),
+    groupedTabCount: moves
+      .filter((move) => move.kind === 'group')
       .reduce((total, move) => total + move.tabCount, 0),
     tabCount: moves.reduce((total, move) => total + move.tabCount, 0),
     newStorageWindowCount: slots.filter((slot, index) => slot.existingWindowId === null && moves.some((move) => move.slot === index)).length

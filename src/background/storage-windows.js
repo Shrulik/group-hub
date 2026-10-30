@@ -138,6 +138,11 @@ export function createStorageWindows({ refreshSnapshot }) {
       closingWindowCount: plan.closingWindowIds.length,
       windowsKeptOpen: plan.windowsKeptOpen,
       recentGroupCount: plan.recentGroupCount,
+      recentGroupTabCount: plan.recentGroupTabCount,
+      recentlySeenTabCount: plan.recentlySeenTabCount,
+      visibleTabOnlyGroupCount: plan.visibleTabOnlyGroupCount,
+      untouchedWindowCount: plan.untouchedWindowCount,
+      groupedTabCount: plan.groupedTabCount,
       restartBurstTabCount: plan.restartBurstTabCount,
       skippedCurrentGroupCount: plan.skippedCurrentGroups.length,
       audibleTabs: await describeAudibleTabs(plan)
