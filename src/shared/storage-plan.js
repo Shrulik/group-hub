@@ -98,6 +98,13 @@ export function lastActivityOfGroup(tabs, recordedActivity = 0, ignoredTabIds = 
     .reduce((latest, tab) => Math.max(latest, tab.lastAccessed ?? 0), recordedActivity);
 }
 
+function highestLooseNumber(groups) {
+  return groups.reduce((highest, group) => {
+    const match = /^Loose (\d+)$/.exec(group.title ?? '');
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0);
+}
+
 function packIntoSlots(moves, storageWindows, markerPrefix) {
   const slots = storageWindows.map((window) => ({
     existingWindowId: window.id,
@@ -135,6 +142,7 @@ export function planStorageRun({
   const skippedCurrentGroups = [];
   let windowsKeptOpen = 0;
   let recentGroupCount = 0;
+  let looseCounter = highestLooseNumber(groups);
 
   for (const window of normalWindows) {
     if (storageIds.has(window.id) || (mode === STORAGE_MODE_WINDOW && window.id !== targetWindowId)) {
@@ -200,7 +208,7 @@ export function planStorageRun({
         moves.push({
           kind: 'loose',
           groupId: null,
-          title: `Loose ${new Date(now).toISOString().slice(0, 10)}`,
+          title: `Loose ${(looseCounter += 1)}`,
           color: 'grey',
           tabIds: looseTabs.map((tab) => tab.id),
           tabCount: looseTabs.length,

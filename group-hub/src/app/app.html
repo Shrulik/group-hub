@@ -308,7 +308,7 @@
         <ul class="storage-panel__list">
           <li>{{ count(panel.preview.groupCount, 'group') }}, {{ count(panel.preview.tabCount, 'tab') }}</li>
           @if (panel.preview.looseTabCount) {
-            <li>{{ count(panel.preview.looseTabCount, 'ungrouped tab') }} go into a new group named Loose</li>
+            <li>{{ count(panel.preview.looseTabCount, 'ungrouped tab') }} go into numbered Loose groups, one per window</li>
           }
           <li>{{ count(panel.preview.newStorageWindowCount, 'new storage window') }}</li>
           <li>{{ count(panel.preview.closingWindowCount, 'window') }} will close because nothing is left in them</li>

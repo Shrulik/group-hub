@@ -130,6 +130,7 @@ Files: `src/shared/storage-plan.js` (pure planning), `src/background/storage-win
 - A storage window is identified by its pinned `data:` marker tab (`STORAGE_MARKER_PREFIX`). Window, tab and group ids do not survive a restart, and extension pages close when the extension reloads.
 - A group's last activity is the newest of its tabs' `lastAccessed` and `tgm.groupActivity`. Tabs stamped within 5 minutes across 10 or more windows are ignored, because a Chrome restart stamps them without any use. Stored groups and contexts live in `tgm.storageState`, keyed by group id and re-matched by fingerprint after a restart.
 - Any tab that finishes loading in a minimized storage window is unloaded again, which covers Chrome's reloads after a restart. Tabs playing audio are left alone.
+- Ungrouped tabs go into one numbered `Loose N` group per source window, continuing from the highest existing number.
 - A run has no undo. Sending again retries anything that failed. Each run first writes `group-hub-before-storage-run.json`, separate from the rotating backups, so later backups cannot replace it.
 - Backups cover every normal window: groups, ungrouped and pinned tabs, window state, bounds and active tab. Restore unloads every tab except the active tab in a visible window, and Replace with such a backup closes all current tabs.
 - Snapshot rebuilds pause during a run.

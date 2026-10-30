@@ -145,6 +145,17 @@ describe('storage plan', () => {
     expect(result.closingWindowIds).toEqual([]);
   });
 
+  it('numbers one Loose group per window, continuing after existing ones', () => {
+    const windows = [
+      { id: 1, tabs: [tab(), ...tabsInGroup(10, 1)] },
+      { id: 2, tabs: [tab(), ...tabsInGroup(11, 1)] }
+    ];
+    const existing = { id: 20, title: 'Loose 4', color: 'grey' };
+    const storage = { id: 9, tabs: [tab({ url: `${MARKER}?id=a` }), ...tabsInGroup(20, 1)] };
+    const result = plan([storage, ...windows], [group(10), group(11), existing]);
+    expect(result.moves.filter((move) => move.kind === 'loose').map((move) => move.title)).toEqual(['Loose 5', 'Loose 6']);
+  });
+
   it('leaves loose tabs alone when a group stays or the window has no groups', () => {
     const mixed = [{ id: 1, tabs: [tab(), ...tabsInGroup(10, 1), ...tabsInGroup(11, 1, { lastAccessed: FRESH })] }];
     expect(plan(mixed, [group(10), group(11)]).looseTabCount).toBe(0);
