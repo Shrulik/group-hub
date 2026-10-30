@@ -1,3 +1,4 @@
+// @ts-nocheck
 import {
   buildExportPayload,
   chooseBackupFileName,
@@ -5,6 +6,56 @@ import {
 } from '@group-hub/shared/backup-format';
 
 describe('backup format', () => {
+  it('captures ungrouped tabs, group-less windows and window state', () => {
+    const payload = buildExportPayload(
+      {
+        groups: [
+          {
+            title: 'First',
+            color: 'blue',
+            createdAt: 100,
+            windowId: 20,
+            tabs: [{ title: 'A', url: 'https://example.com/a', pinned: false, index: 1, active: true }]
+          }
+        ]
+      },
+      [
+        {
+          id: 20,
+          state: 'minimized',
+          left: 1,
+          top: 2,
+          width: 300,
+          height: 400,
+          tabs: [
+            { title: 'Pinned', url: 'https://example.com/p', pinned: true, index: 0, groupId: -1 },
+            { title: 'A', url: 'https://example.com/a', index: 1, groupId: 5 }
+          ]
+        },
+        { id: 30, state: 'normal', tabs: [{ title: 'B', url: 'https://example.com/b', index: 0, groupId: -1 }] },
+        { id: 40, type: 'popup', state: 'normal', tabs: [{ url: 'https://example.com/c', groupId: -1 }] }
+      ]
+    );
+
+    const normalized = normalizeBackupPayload(JSON.parse(JSON.stringify(payload)));
+    expect(normalized.capturesAllTabs).toBeTrue();
+    expect(normalized.tabCount).toBe(3);
+    expect(normalized.windows.length).toBe(2);
+    expect(normalized.windows[0].state).toBe('minimized');
+    expect(normalized.windows[0].width).toBe(300);
+    expect(normalized.windows[0].ungroupedTabs[0].pinned).toBeTrue();
+    expect(normalized.windows[0].groups[0].tabs[0].active).toBeTrue();
+    expect(normalized.windows[1].groups).toEqual([]);
+  });
+
+  it('marks older backups as not covering every tab', () => {
+    const normalized = normalizeBackupPayload({
+      groups: [{ title: 'Old', windowId: 1, tabs: [{ url: 'https://example.com' }] }]
+    });
+    expect(normalized.capturesAllTabs).toBeFalse();
+    expect(normalized.windows[0].ungroupedTabs).toEqual([]);
+  });
+
   it('exports groups in their source window partitions', () => {
     const payload = buildExportPayload({
       groups: [

@@ -72,6 +72,11 @@ export class GroupHubStore {
     return response.result;
   }
 
+  async storageRequest(type, params = {}) {
+    const response = await this.sendMessage({ channel: 'tgm', type, ...params });
+    return response.result;
+  }
+
   async moveTabsToGroup(groupId, tabIds) {
     const response = await this.sendMessage({
       channel: 'tgm',

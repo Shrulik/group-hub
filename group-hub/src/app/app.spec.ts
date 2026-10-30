@@ -30,7 +30,8 @@ import { App } from './app';
     move: jasmine.createSpy('chrome.tabs.move').and.returnValue(Promise.resolve({}))
   },
   windows: {
-    getLastFocused: jasmine.createSpy('chrome.windows.getLastFocused').and.returnValue(Promise.resolve({ id: 1, type: 'normal' }))
+    getLastFocused: jasmine.createSpy('chrome.windows.getLastFocused').and.returnValue(Promise.resolve({ id: 1, type: 'normal' })),
+    getCurrent: jasmine.createSpy('chrome.windows.getCurrent').and.returnValue(Promise.resolve({ id: 1, type: 'normal' }))
   },
   tabGroups: {
     query: jasmine.createSpy('chrome.tabGroups.query').and.returnValue(Promise.resolve([])),
@@ -49,6 +50,14 @@ describe('App', () => {
     const fixture = TestBed.createComponent(App);
     const app = fixture.componentInstance;
     expect(app).toBeTruthy();
+  });
+
+  it('offers both storage buttons with explanations', () => {
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    const compiled = fixture.nativeElement as HTMLElement;
+    expect(compiled.querySelector('[aria-label="Send old groups to storage"]')?.getAttribute('title')).toContain('three weeks');
+    expect(compiled.querySelector('[aria-label="Send this window to storage"]')).toBeTruthy();
   });
 
   it('should render search input', () => {

@@ -121,3 +121,15 @@ Location: `src/shared`
 - **Full-page manager**: same Angular app can be wrapped into a standalone page by reusing the module and providing a different shell.
 - **Sync / persistence**: snapshot + metadata stored in `chrome.storage.local`; switching to `chrome.storage.sync` would require quota checks but architecture already centralises storage interaction.
 
+
+## Storage windows
+
+Files: `src/shared/storage-plan.js` (pure planning), `src/background/storage-windows.js` (runs, pop-out, unloading).
+
+- A run moves qualifying groups with `chrome.tabGroups.move` into small minimized windows, unloads their tabs, and lets emptied windows close. Each window holds up to 400 tabs, and a group is never split.
+- A storage window is identified by its pinned `data:` marker tab (`STORAGE_MARKER_PREFIX`). Window, tab and group ids do not survive a restart, and extension pages close when the extension reloads.
+- A group's last activity is the newest of its tabs' `lastAccessed` and `tgm.groupActivity`. Stored groups and contexts live in `tgm.storageState`, keyed by group id and re-matched by fingerprint after a restart.
+- Any tab that finishes loading in a minimized storage window is unloaded again, which covers Chrome's reloads after a restart. Tabs playing audio are left alone.
+- A run has no undo. Sending again retries anything that failed. Each run first writes `group-hub-before-storage-run.json`, separate from the rotating backups, so later backups cannot replace it.
+- Backups cover every normal window: groups, ungrouped and pinned tabs, window state, bounds and active tab. Restore unloads every tab except the active tab in a visible window, and Replace with such a backup closes all current tabs.
+- Snapshot rebuilds pause during a run.

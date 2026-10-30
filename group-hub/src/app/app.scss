@@ -714,3 +714,44 @@ app-root {
   gap: 8px;
   flex-shrink: 0;
 }
+
+.storage-panel {
+  background: var(--gh-elevated);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  padding: 10px;
+  box-shadow: var(--gh-shadow-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.storage-panel__title {
+  margin: 0;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.storage-panel__copy {
+  margin: 0;
+  color: var(--gh-text-secondary);
+  font-size: 0.76rem;
+}
+
+.storage-panel__list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.76rem;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.storage-panel__tab {
+  border: none;
+  background: transparent;
+  color: var(--gh-accent);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+}

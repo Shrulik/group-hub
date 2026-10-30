@@ -16,10 +16,12 @@ import { FormsModule } from '@angular/forms';
 import {
   getBackupStatusForHandle,
   readBackupFile,
+  writePreRunBackup,
   writeRotatingBackup
 } from '@group-hub/shared/backup-files';
 import { getBackupDirectoryHandle, setBackupDirectoryHandle } from '@group-hub/shared/backup-storage';
-import { BACKUP_SETTINGS_KEY } from '@group-hub/shared/constants';
+import { BACKUP_SETTINGS_KEY, PRE_RUN_BACKUP_FILE_NAME } from '@group-hub/shared/constants';
+import { STORAGE_MODE_STALE, STORAGE_MODE_WINDOW } from '@group-hub/shared/storage-plan';
 import { GroupHubStore } from './services/group-hub.store';
 
 const VIEW_MODE = {
@@ -65,6 +67,11 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
   selectedTabIds = signal([]);
   lastMoveAction = signal(null); // Keep for backward compatibility, but will load from storage
 
+  storagePanel = signal(null);
+  popOutChoice = signal(null);
+
+  storageModes = { stale: STORAGE_MODE_STALE, window: STORAGE_MODE_WINDOW };
+
   searchDebounceTimer;
 
   snapshot = computed(() => this.store.snapshot());
@@ -87,6 +94,12 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     return `${count} tab${count === 1 ? '' : 's'} moved to ${groupName}`;
   });
   backupCanRestore = computed(() => Boolean(this.backupStatus()?.latestBackup));
+  preRunBackupTitle = computed(() => {
+    const preRunBackup = this.backupStatus()?.preRunBackup;
+    return preRunBackup
+      ? `Will restore the backup from before the last storage run, ${this.formatTimestamp(preRunBackup.generatedAt)}`
+      : '';
+  });
   backupRestoreTitle = computed(() => {
     const latestBackup = this.backupStatus()?.latestBackup;
     if (!latestBackup) {
@@ -192,6 +205,15 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     }
 
     try {
+      const info = await this.store.storageRequest('storageGroupInfo', { groupId });
+      if (info?.inStorage) {
+        if (info.contextMembers.length) {
+          this.popOutChoice.set({ groupId, members: info.contextMembers });
+        } else {
+          await this.popOutGroup(groupId, 'group');
+        }
+        return;
+      }
       await this.store.openGroup(groupId);
       try {
         window.close();
@@ -200,8 +222,105 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
       }
     } catch (error) {
       console.error('[GroupHub] activate group failed', error);
-      this.flashStatus('Unable to open the group. It may no longer exist.', 'error');
+      this.flashStatus(this.errorMessage(error, 'Unable to open the group.'), 'error');
     }
+  }
+
+  count(value, noun) {
+    return `${value} ${noun}${value === 1 ? '' : 's'}`;
+  }
+
+  async targetWindowFor(mode) {
+    return mode === STORAGE_MODE_WINDOW ? (await chrome.windows.getCurrent()).id : undefined;
+  }
+
+  async openStoragePanel(mode) {
+    try {
+      const windowId = await this.targetWindowFor(mode);
+      const preview = await this.store.storageRequest('storagePreview', { mode, windowId });
+      this.storagePanel.set({ mode, windowId, preview });
+    } catch (error) {
+      console.error('[GroupHub] storage preview failed', error);
+      this.flashStatus('Unable to check which groups would move.', 'error');
+    }
+  }
+
+  closeStoragePanel() {
+    this.storagePanel.set(null);
+  }
+
+  async confirmStorageRun() {
+    const panel = this.storagePanel();
+    if (!panel) {
+      return;
+    }
+    this.storagePanel.set(null);
+    if (!(await this.savePreRunBackup())) {
+      return;
+    }
+    try {
+      const result = await this.store.storageRequest('storageRun', {
+        mode: panel.mode,
+        windowId: panel.windowId
+      });
+      if (result?.blocked === 'audible') {
+        this.storagePanel.set({ ...panel, preview: { ...panel.preview, audibleTabs: result.audibleTabs } });
+      } else if (result) {
+        this.flashStatus(
+          `${this.count(result.movedGroups, 'group')} stored${result.failed ? `, ${result.failed} failed. Send again to retry` : ''}.`,
+          result.failed ? 'error' : 'success'
+        );
+      }
+    } catch (error) {
+      console.error('[GroupHub] storage run failed', error);
+      this.flashStatus('The storage run failed. Send again to retry.', 'error');
+    }
+  }
+
+  async savePreRunBackup() {
+    try {
+      const handle = await getBackupDirectoryHandle();
+      if (!handle) {
+        this.flashStatus('Choose a backup folder in the cog menu before sending groups to storage.', 'error');
+        return false;
+      }
+      if (!(await this.ensureBackupPermission(handle))) {
+        this.flashStatus('Backup folder permission was not granted, so nothing was moved.', 'error');
+        return false;
+      }
+      await writePreRunBackup(handle, await this.store.exportData());
+      await this.loadBackupStatus();
+      return true;
+    } catch (error) {
+      console.error('[GroupHub] backup before storage run failed', error);
+      this.flashStatus('The backup failed, so nothing was moved.', 'error');
+      return false;
+    }
+  }
+
+  async goToTab(tab) {
+    try {
+      await chrome.tabs.update(tab.id, { active: true });
+      await chrome.windows.update(tab.windowId, { focused: true });
+    } catch (error) {
+      console.error('[GroupHub] unable to open playing tab', error);
+      this.flashStatus('Unable to open that tab.', 'error');
+    }
+  }
+
+  async popOutGroup(groupId, scope) {
+    this.popOutChoice.set(null);
+    try {
+      await this.store.storageRequest('storagePopOut', { groupId, scope });
+      window.close();
+    } catch (error) {
+      console.error('[GroupHub] pop out failed', error);
+      this.flashStatus('Unable to bring that group back.', 'error');
+    }
+  }
+
+  closePopOutChoice() {
+    this.popOutChoice.set(null);
   }
 
   expandGroupFully(groupId) {
@@ -346,7 +465,11 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     const source = this.restoreChoice();
     try {
       let result;
-      if (source === 'backup') {
+      if (source === 'pre-run') {
+        const handle = await getBackupDirectoryHandle();
+        result = await this.store.importData(await readBackupFile(handle, PRE_RUN_BACKUP_FILE_NAME), mode);
+        await this.loadBackupStatus();
+      } else if (source === 'backup') {
         const payload = await this.readLatestBackupPayload();
         result = await this.store.importData(payload, mode);
         await this.loadBackupStatus();

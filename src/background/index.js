@@ -14,6 +14,7 @@ import {
   isValidRestoreMode,
   normalizeBackupPayload
 } from '../shared/backup-format.js';
+import { createStorageWindows } from './storage-windows.js';
 
 const TAB_GROUP_ID_NONE = -1;
 
@@ -24,6 +25,10 @@ let metadataDirty = false;
 let currentSnapshot = null;
 let refreshTimer;
 let listenersRegistered = false;
+let resolveReady;
+const ready = new Promise((resolve) => {
+  resolveReady = resolve;
+});
 
 async function loadInitialState() {
   const stored = await chrome.storage.local.get({
@@ -137,6 +142,7 @@ async function persistState(snapshot) {
 }
 
 async function refreshSnapshot(reason) {
+  await ready;
   try {
     const snapshot = await buildSnapshot();
     currentSnapshot = snapshot;
@@ -150,6 +156,9 @@ async function refreshSnapshot(reason) {
 }
 
 function scheduleRefresh(reason) {
+  if (storageWindows.isRunning()) {
+    return;
+  }
   if (refreshTimer !== undefined) {
     clearTimeout(refreshTimer);
   }
@@ -159,9 +168,16 @@ function scheduleRefresh(reason) {
   }, REFRESH_DEBOUNCE_MS);
 }
 
+const storageWindows = createStorageWindows({ refreshSnapshot });
+
+function groupOfTabInSnapshot(tabId) {
+  return currentSnapshot?.groups.find((group) => group.tabs.some((tab) => tab.id === tabId))?.id;
+}
+
 async function handleExport() {
-  const snapshot = currentSnapshot ?? (await refreshSnapshot('export request rebuild'));
-  return buildExportPayload(snapshot);
+  const snapshot = await refreshSnapshot('export request');
+  const windows = await chrome.windows.getAll({ populate: true });
+  return buildExportPayload(snapshot, windows);
 }
 
 async function handleImport(payload, mode = RESTORE_MODE_APPEND) {
@@ -170,21 +186,34 @@ async function handleImport(payload, mode = RESTORE_MODE_APPEND) {
   }
 
   const normalized = normalizeBackupPayload(payload);
-  const replaceTabIds = mode === RESTORE_MODE_REPLACE ? await collectCurrentGroupedTabIds() : [];
-  const result = await createGroupsFromBackup(normalized);
-
-  if (mode === RESTORE_MODE_REPLACE) {
-    if (result.createdTabs === normalized.tabCount && replaceTabIds.length > 0) {
-      await chrome.tabs.remove(replaceTabIds);
-      result.removedTabs = replaceTabIds.length;
-    } else if (result.createdTabs !== normalized.tabCount) {
-      result.partial = true;
+  const replaceTabIds =
+    mode !== RESTORE_MODE_REPLACE
+      ? []
+      : normalized.capturesAllTabs
+        ? await collectAllTabIds()
+        : await collectCurrentGroupedTabIds();
+  const result = await storageWindows.runQuietly(async () => {
+    const created = await createGroupsFromBackup(normalized);
+    if (mode === RESTORE_MODE_REPLACE) {
+      if (created.createdTabs === normalized.tabCount && replaceTabIds.length > 0) {
+        await chrome.tabs.remove(replaceTabIds);
+        created.removedTabs = replaceTabIds.length;
+      } else if (created.createdTabs !== normalized.tabCount) {
+        created.partial = true;
+      }
     }
-  }
+    return created;
+  });
 
+  await storageWindows.reconcileGroupIds();
   await refreshSnapshot('import completed');
 
   return result;
+}
+
+async function collectAllTabIds() {
+  const tabs = await chrome.tabs.query({});
+  return tabs.map((tab) => tab.id).filter((id) => typeof id === 'number');
 }
 
 async function collectCurrentGroupedTabIds() {
@@ -201,6 +230,39 @@ async function collectCurrentGroupedTabIds() {
   return ids;
 }
 
+function restoreRows(windowEntry) {
+  const rows = [
+    ...windowEntry.groups.flatMap((group) => group.tabs.map((tab) => ({ tab, group }))),
+    ...windowEntry.ungroupedTabs.map((tab) => ({ tab, group: null }))
+  ];
+  if (rows.every((row) => Number.isFinite(row.tab.index))) {
+    rows.sort((a, b) => a.tab.index - b.tab.index);
+  }
+  return rows;
+}
+
+function restoredWindowOptions(windowEntry) {
+  const options = { focused: false };
+  if (windowEntry.state !== 'maximized' && windowEntry.state !== 'fullscreen') {
+    for (const key of ['left', 'top', 'width', 'height']) {
+      if (windowEntry[key] !== undefined) {
+        options[key] = windowEntry[key];
+      }
+    }
+  }
+  return options;
+}
+
+async function discardRestoredTabs(tabIds) {
+  for (const tabId of tabIds) {
+    try {
+      await chrome.tabs.discard(tabId);
+    } catch (error) {
+      console.debug('[GroupHub] unable to unload restored tab', error);
+    }
+  }
+}
+
 async function createGroupsFromBackup(payload) {
   const result = {
     createdGroups: 0,
@@ -211,12 +273,12 @@ async function createGroupsFromBackup(payload) {
   };
 
   for (const windowEntry of payload.windows) {
-    const groupsWithTabs = windowEntry.groups.filter((group) => group.tabs.length > 0);
-    if (!groupsWithTabs.length) {
+    const rows = restoreRows(windowEntry);
+    if (!rows.length) {
       continue;
     }
 
-    const createdWindow = await chrome.windows.create({ focused: false });
+    const createdWindow = await chrome.windows.create(restoredWindowOptions(windowEntry));
     result.createdWindows += 1;
     const windowId = createdWindow.id;
     if (!Number.isFinite(windowId)) {
@@ -226,35 +288,48 @@ async function createGroupsFromBackup(payload) {
     const placeholderTabIds = (createdWindow.tabs ?? [])
       .map((tab) => tab.id)
       .filter((id) => typeof id === 'number');
-    const windowTabIds = [];
+    const minimized = windowEntry.state === 'minimized';
+    const tabIdsByGroup = new Map();
+    const createdTabIds = [];
+    let activeTabId = null;
 
-    for (const group of groupsWithTabs) {
-      const tabIds = [];
-      for (const tab of group.tabs) {
-        try {
-          const created = await chrome.tabs.create({
-            windowId,
-            url: tab.url,
-            active: false,
-            pinned: Boolean(tab.pinned)
-          });
-          if (created.id !== undefined) {
-            tabIds.push(created.id);
-            windowTabIds.push(created.id);
-            result.createdTabs += 1;
-          }
-        } catch (error) {
-          result.partial = true;
-          console.error('[GroupHub] failed to create tab during import', tab.url, error);
-        }
-      }
-
-      if (!tabIds.length) {
-        continue;
-      }
-
+    for (const { tab, group } of rows) {
       try {
-        const groupId = await chrome.tabs.group({ tabIds });
+        const created = await chrome.tabs.create({
+          windowId,
+          url: tab.url,
+          active: false,
+          pinned: Boolean(tab.pinned)
+        });
+        if (created.id === undefined) {
+          continue;
+        }
+        createdTabIds.push(created.id);
+        result.createdTabs += 1;
+        if (tab.active) {
+          activeTabId = created.id;
+        }
+        if (group) {
+          if (!tabIdsByGroup.has(group)) {
+            tabIdsByGroup.set(group, []);
+          }
+          tabIdsByGroup.get(group).push(created.id);
+        }
+      } catch (error) {
+        result.partial = true;
+        console.error('[GroupHub] failed to create tab during import', error);
+      }
+    }
+
+    activeTabId = activeTabId ?? createdTabIds[0] ?? null;
+    if (activeTabId !== null) {
+      await chrome.tabs.update(activeTabId, { active: true });
+    }
+    await discardRestoredTabs(createdTabIds.filter((id) => minimized || id !== activeTabId));
+
+    for (const [group, tabIds] of tabIdsByGroup) {
+      try {
+        const groupId = await chrome.tabs.group({ tabIds, createProperties: { windowId } });
         await chrome.tabGroups.update(groupId, {
           title: group.title,
           color: normalizeGroupColor(group.color),
@@ -268,11 +343,19 @@ async function createGroupsFromBackup(payload) {
       }
     }
 
-    if (windowTabIds.length && placeholderTabIds.length) {
+    if (createdTabIds.length && placeholderTabIds.length) {
       try {
         await chrome.tabs.remove(placeholderTabIds);
       } catch (error) {
         console.debug('[GroupHub] failed to remove import placeholder tab', error);
+      }
+    }
+
+    if (windowEntry.state === 'minimized' || windowEntry.state === 'maximized' || windowEntry.state === 'fullscreen') {
+      try {
+        await chrome.windows.update(windowId, { state: windowEntry.state });
+      } catch (error) {
+        console.debug('[GroupHub] unable to restore window state', error);
       }
     }
   }
@@ -468,25 +551,60 @@ function registerListeners() {
   });
 
   chrome.tabGroups.onCreated.addListener((group) => {
-    ensureGroupMetadata(group.id);
+    void ready.then(() => ensureGroupMetadata(group.id));
     scheduleRefresh('group created');
   });
 
-  chrome.tabGroups.onUpdated.addListener(() => scheduleRefresh('group updated'));
+  chrome.tabGroups.onUpdated.addListener((group) => {
+    void ready.then(() => {
+      const known = currentSnapshot?.groups.find((entry) => entry.id === group.id);
+      if (known && (known.title !== (group.title ?? '') || known.color !== group.color)) {
+        storageWindows.touchGroup(group.id);
+      }
+    });
+    scheduleRefresh('group updated');
+  });
   chrome.tabGroups.onMoved.addListener(() => scheduleRefresh('group moved'));
   chrome.tabGroups.onRemoved.addListener((group) => {
-    if (group && typeof group.id === 'number') {
-      if (metadata[group.id]) {
+    void ready.then(() => {
+      if (group && typeof group.id === 'number' && metadata[group.id]) {
         delete metadata[group.id];
         metadataDirty = true;
       }
-    }
+    });
     scheduleRefresh('group removed');
   });
 
   chrome.tabs.onCreated.addListener(() => scheduleRefresh('tab created'));
-  chrome.tabs.onRemoved.addListener(() => scheduleRefresh('tab removed'));
-  chrome.tabs.onUpdated.addListener(() => scheduleRefresh('tab updated'));
+  chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+    void ready.then(() => {
+      if (!removeInfo.isWindowClosing) {
+        storageWindows.touchGroup(groupOfTabInSnapshot(tabId));
+      }
+    });
+    scheduleRefresh('tab removed');
+  });
+  chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
+    void ready.then(() => {
+      if (changeInfo.url || changeInfo.groupId !== undefined) {
+        storageWindows.touchGroup(tab.groupId);
+      }
+      if (changeInfo.status === 'complete') {
+        void storageWindows.unloadIfStored(tab);
+      }
+    });
+    scheduleRefresh('tab updated');
+  });
+  chrome.tabs.onActivated.addListener(({ tabId }) => {
+    void ready.then(async () => {
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        storageWindows.touchGroup(tab.groupId);
+      } catch (error) {
+        console.debug('[GroupHub] activated tab no longer open', error);
+      }
+    });
+  });
   chrome.tabs.onMoved.addListener(() => scheduleRefresh('tab moved'));
   chrome.tabs.onAttached.addListener(() => scheduleRefresh('tab attached'));
   chrome.tabs.onDetached.addListener(() => scheduleRefresh('tab detached'));
@@ -498,6 +616,7 @@ function registerListeners() {
 
     (async () => {
       try {
+        await ready;
         switch (message.type) {
           case 'getSnapshot': {
             const snapshot = currentSnapshot ?? (await refreshSnapshot('message getSnapshot'));
@@ -534,6 +653,26 @@ function registerListeners() {
             sendResponse({ result });
             break;
           }
+          case 'storagePreview': {
+            const result = await storageWindows.preview(message.mode, message.windowId);
+            sendResponse({ result });
+            break;
+          }
+          case 'storageRun': {
+            const result = await storageWindows.run(message.mode, message.windowId);
+            sendResponse({ result });
+            break;
+          }
+          case 'storageGroupInfo': {
+            const result = await storageWindows.groupInfo(message.groupId);
+            sendResponse({ result });
+            break;
+          }
+          case 'storagePopOut': {
+            const result = await storageWindows.popOut(message.groupId, message.scope);
+            sendResponse({ result });
+            break;
+          }
           default: {
             console.warn('[GroupHub] unknown message received', message);
             sendResponse({ error: 'Unknown message type' });
@@ -550,9 +689,12 @@ function registerListeners() {
 }
 
 async function bootstrap() {
-  await loadInitialState();
   registerListeners();
+  await loadInitialState();
+  await storageWindows.load();
+  resolveReady();
   await ensureBackupAlarm();
+  await storageWindows.handleSessionStart();
   await refreshSnapshot('initial bootstrap');
 }
 

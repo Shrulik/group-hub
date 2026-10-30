@@ -18,9 +18,25 @@ export function isValidRestoreMode(mode) {
   return mode === RESTORE_MODE_APPEND || mode === RESTORE_MODE_REPLACE;
 }
 
-export function buildExportPayload(snapshot) {
+function exportTab(tab) {
+  return {
+    title: tab.title,
+    url: tab.url || tab.pendingUrl,
+    pinned: tab.pinned,
+    index: tab.index,
+    active: Boolean(tab.active)
+  };
+}
+
+function isUngrouped(tab) {
+  return tab.groupId === undefined || tab.groupId < 0;
+}
+
+export function buildExportPayload(snapshot, liveWindows = null) {
   const generatedAt = Date.now();
-  const windowIds = [...new Set(snapshot.groups.map((group) => group.windowId))]
+  const normalWindows = (liveWindows ?? []).filter((window) => (window.type ?? 'normal') === 'normal');
+  const liveWindowsById = new Map(normalWindows.map((window) => [window.id, window]));
+  const windowIds = [...new Set([...snapshot.groups.map((group) => group.windowId), ...liveWindowsById.keys()])]
     .filter((windowId) => Number.isFinite(windowId))
     .sort((a, b) => a - b);
   const windowIndexById = new Map(windowIds.map((windowId, index) => [windowId, index]));
@@ -34,25 +50,37 @@ export function buildExportPayload(snapshot) {
       createdAt: group.createdAt,
       backupWindowId,
       sourceWindowId: group.windowId,
-      tabs: group.tabs.map((tab) => ({
-        title: tab.title,
-        url: tab.url,
-        pinned: tab.pinned
-      }))
+      tabs: group.tabs.map(exportTab)
     };
   });
-  const windows = [...new Set(groups.map((group) => group.backupWindowId))]
+  const sourceIdByBackupId = new Map(windowIds.map((windowId, index) => [index, windowId]));
+  const windows = [...new Set([...groups.map((group) => group.backupWindowId), ...sourceIdByBackupId.keys()])]
     .sort((a, b) => a - b)
-    .map((backupWindowId) => ({
-      backupWindowId,
-      sourceWindowId: groups.find((group) => group.backupWindowId === backupWindowId)?.sourceWindowId,
-      groups: groups.filter((group) => group.backupWindowId === backupWindowId)
-    }));
+    .map((backupWindowId) => {
+      const sourceWindowId =
+        sourceIdByBackupId.get(backupWindowId) ??
+        groups.find((group) => group.backupWindowId === backupWindowId)?.sourceWindowId;
+      const live = liveWindowsById.get(sourceWindowId);
+      return {
+        backupWindowId,
+        sourceWindowId,
+        groups: groups.filter((group) => group.backupWindowId === backupWindowId),
+        ...(live && {
+          state: live.state,
+          left: live.left,
+          top: live.top,
+          width: live.width,
+          height: live.height,
+          ungroupedTabs: (live.tabs ?? []).filter(isUngrouped).map(exportTab)
+        })
+      };
+    });
 
   return {
     schemaVersion: EXPORT_SCHEMA_VERSION,
     generatedAt,
     backupDate: localDateKey(generatedAt),
+    capturesAllTabs: liveWindows !== null,
     windows,
     groups
   };
@@ -76,9 +104,15 @@ export function normalizeBackupPayload(payload) {
       sourceWindowId: Number.isFinite(windowEntry.sourceWindowId)
         ? windowEntry.sourceWindowId
         : undefined,
-      groups: normalizeGroups(windowEntry.groups ?? [])
+      groups: normalizeGroups(windowEntry.groups ?? []),
+      ungroupedTabs: normalizeTabs(windowEntry.ungroupedTabs),
+      state: typeof windowEntry.state === 'string' ? windowEntry.state : undefined,
+      left: finiteOrUndefined(windowEntry.left),
+      top: finiteOrUndefined(windowEntry.top),
+      width: finiteOrUndefined(windowEntry.width),
+      height: finiteOrUndefined(windowEntry.height)
     }))
-    .filter((windowEntry) => windowEntry.groups.length > 0);
+    .filter((windowEntry) => windowEntry.groups.length > 0 || windowEntry.ungroupedTabs.length > 0);
 
   if (!nonEmptyWindows.length) {
     throw new Error('Import payload contains no restorable tab groups');
@@ -98,9 +132,12 @@ export function normalizeBackupPayload(payload) {
       : EXPORT_SCHEMA_VERSION,
     generatedAt,
     backupDate: typeof payload.backupDate === 'string' ? payload.backupDate : localDateKey(generatedAt),
+    capturesAllTabs: payload.capturesAllTabs === true,
     windows: nonEmptyWindows,
     groups,
-    tabCount: groups.reduce((sum, group) => sum + group.tabs.length, 0)
+    tabCount:
+      groups.reduce((sum, group) => sum + group.tabs.length, 0) +
+      nonEmptyWindows.reduce((sum, windowEntry) => sum + windowEntry.ungroupedTabs.length, 0)
   };
 }
 
@@ -119,8 +156,13 @@ export function chooseBackupFileName(validBackups, timestamp = Date.now()) {
   return [...validBackups].sort((a, b) => a.generatedAt - b.generatedAt)[0]?.fileName ?? BACKUP_FILE_NAMES[0];
 }
 
+function finiteOrUndefined(value) {
+  return Number.isFinite(value) ? value : undefined;
+}
+
 function normalizeWindows(windows) {
   return windows.map((windowEntry) => ({
+    ...windowEntry,
     backupWindowId: Number(windowEntry?.backupWindowId),
     sourceWindowId: Number(windowEntry?.sourceWindowId),
     groups: Array.isArray(windowEntry?.groups) ? windowEntry.groups : []
@@ -173,7 +215,9 @@ function normalizeTabs(tabs) {
     .map((tab) => ({
       title: typeof tab?.title === 'string' ? tab.title : '',
       url: typeof tab?.url === 'string' ? tab.url.trim() : '',
-      pinned: Boolean(tab?.pinned)
+      pinned: Boolean(tab?.pinned),
+      index: finiteOrUndefined(tab?.index),
+      active: Boolean(tab?.active)
     }))
     .filter((tab) => tab.url.length > 0);
 }

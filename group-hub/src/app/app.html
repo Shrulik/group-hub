@@ -200,6 +200,17 @@
     >
       Restore
     </button>
+    @if (preRunBackupTitle()) {
+      <button
+        type="button"
+        class="utility-menu__btn"
+        aria-label="Restore tabs from before the last storage run"
+        [title]="preRunBackupTitle()"
+        (click)="restoreChoice.set('pre-run')"
+      >
+        Before storage
+      </button>
+    }
     <button
       type="button"
       class="utility-menu__icon"
@@ -243,7 +254,9 @@
   @if (restoreChoice(); as source) {
     <section class="restore-panel">
       <div class="restore-panel__copy">
-        @if (source === 'backup') {
+        @if (source === 'pre-run') {
+          Restore from before the last storage run. Replace closes your current windows and tabs. Restored tabs lose their back/forward history.
+        } @else if (source === 'backup') {
           Restore from backup
         } @else {
           Import tab groups
@@ -259,6 +272,78 @@
     </section>
   }
 
+  @if (storagePanel(); as panel) {
+    <section class="storage-panel" role="dialog" aria-label="Send groups to storage">
+      <h2 class="storage-panel__title">
+        @if (panel.mode === storageModes.stale) {
+          Send old groups to storage
+        } @else {
+          Send this window to storage
+        }
+      </h2>
+      @if (panel.preview.audibleTabs.length) {
+        <p class="storage-panel__copy">These tabs are playing. Click one to go to it and pause it, then open Group Hub and send again.</p>
+        <ul class="storage-panel__list">
+          @for (tab of panel.preview.audibleTabs; track tab.id) {
+            <li><button type="button" class="storage-panel__tab" (click)="goToTab(tab)">{{ tab.title || tab.url }}</button></li>
+          }
+        </ul>
+        <div class="restore-panel__actions">
+          <button type="button" class="utility-menu__btn" (click)="closeStoragePanel()">Cancel</button>
+        </div>
+      } @else if (panel.preview.tabCount === 0) {
+        <p class="storage-panel__copy">Nothing to send. No group here qualifies.</p>
+        <div class="restore-panel__actions">
+          <button type="button" class="utility-menu__btn" (click)="closeStoragePanel()">Close</button>
+        </div>
+      } @else {
+        <p class="storage-panel__copy">
+          @if (panel.mode === storageModes.stale) {
+            Moves groups with no activity for three weeks into minimized storage windows and unloads their tabs to free memory.
+          } @else {
+            Moves every group in this window into minimized storage windows and unloads their tabs to free memory.
+          }
+          Unsaved text in a loaded tab may be lost. A backup is saved first. Use a group's arrow to bring it back.
+        </p>
+        <ul class="storage-panel__list">
+          <li>{{ count(panel.preview.groupCount, 'group') }}, {{ count(panel.preview.tabCount, 'tab') }}</li>
+          @if (panel.preview.looseTabCount) {
+            <li>{{ count(panel.preview.looseTabCount, 'ungrouped tab') }} go into a new group named Loose</li>
+          }
+          <li>{{ count(panel.preview.newStorageWindowCount, 'new storage window') }}</li>
+          <li>{{ count(panel.preview.closingWindowCount, 'window') }} will close because nothing is left in them</li>
+          @if (panel.preview.windowsKeptOpen) {
+            <li>{{ count(panel.preview.windowsKeptOpen, 'window') }} will stay open with the remaining tabs</li>
+          }
+          @if (panel.preview.skippedCurrentGroupCount) {
+            <li>The group with your current tab stays</li>
+          }
+        </ul>
+        <div class="restore-panel__actions">
+          <button type="button" class="utility-menu__btn" (click)="confirmStorageRun()">Send to storage</button>
+          <button type="button" class="utility-menu__btn" (click)="closeStoragePanel()">Cancel</button>
+        </div>
+      }
+    </section>
+  }
+
+  @if (popOutChoice(); as choice) {
+    <section class="storage-panel" role="dialog" aria-label="Bring group back">
+      <h2 class="storage-panel__title">Bring back the whole context?</h2>
+      <p class="storage-panel__copy">This group shared a window with:</p>
+      <ul class="storage-panel__list">
+        @for (member of choice.members; track member.groupId) {
+          <li>{{ member.title || 'Untitled group' }}</li>
+        }
+      </ul>
+      <div class="restore-panel__actions">
+        <button type="button" class="utility-menu__btn" (click)="popOutGroup(choice.groupId, 'context')">Whole context</button>
+        <button type="button" class="utility-menu__btn" (click)="popOutGroup(choice.groupId, 'group')">Just this group</button>
+        <button type="button" class="utility-menu__btn" (click)="closePopOutChoice()">Cancel</button>
+      </div>
+    </section>
+  }
+
   <footer class="footer">
     <span class="footer__summary">{{ infoSummary() }}</span>
     <div class="footer__actions">
@@ -268,6 +353,33 @@
           <button type="button" class="footer__undo" (click)="undoLastMove()">Undo</button>
         </span>
       }
+      <button
+        type="button"
+        class="footer__gear"
+        aria-label="Send old groups to storage"
+        title="Send old groups to storage: moves groups unused for three weeks into minimized windows and unloads their tabs"
+        (click)="openStoragePanel(storageModes.stale)"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="5" rx="1" />
+          <path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9" />
+          <path d="M10 13h4" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="footer__gear"
+        aria-label="Send this window to storage"
+        title="Send this window to storage: moves all groups in this window into minimized windows and unloads their tabs"
+        (click)="openStoragePanel(storageModes.window)"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="16" rx="2" />
+          <path d="M3 9h18" />
+          <path d="M12 12v5" />
+          <path d="m9 14 3 3 3-3" />
+        </svg>
+      </button>
       <button type="button" class="footer__gear" (click)="toggleUtilityMenu()" title="Utilities">⚙︎</button>
     </div>
   </footer>

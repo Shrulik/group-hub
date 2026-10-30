@@ -1,4 +1,4 @@
-import { BACKUP_FILE_NAMES } from './constants.js';
+import { BACKUP_FILE_NAMES, PRE_RUN_BACKUP_FILE_NAME } from './constants.js';
 import { chooseBackupFileName, localDateKey, normalizeBackupPayload } from './backup-format.js';
 
 export async function queryBackupPermission(handle) {
@@ -46,6 +46,15 @@ export async function readValidBackups(handle) {
   return backups.sort((a, b) => b.generatedAt - a.generatedAt);
 }
 
+async function readPreRunSummary(handle) {
+  try {
+    const payload = await readBackupFile(handle, PRE_RUN_BACKUP_FILE_NAME);
+    return payload ? { generatedAt: normalizeBackupPayload(payload).generatedAt } : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getBackupStatusForHandle(handle, settings = {}) {
   if (!handle) {
     return {
@@ -67,6 +76,7 @@ export async function getBackupStatusForHandle(handle, settings = {}) {
     permission,
     validBackups,
     latestBackup,
+    preRunBackup: permission === 'granted' ? await readPreRunSummary(handle) : null,
     lastBackupAt: latestBackup?.generatedAt ?? settings.lastBackupAt ?? null,
     lastError: settings.lastError ?? null
   };
@@ -99,6 +109,12 @@ export async function writeRotatingBackup(handle, payload, { force = false } = {
     wrote: true,
     fileName: targetFileName
   };
+}
+
+export async function writePreRunBackup(handle, payload) {
+  normalizeBackupPayload(payload);
+  await writeBackupFile(handle, PRE_RUN_BACKUP_FILE_NAME, payload);
+  normalizeBackupPayload(await readBackupFile(handle, PRE_RUN_BACKUP_FILE_NAME));
 }
 
 async function writeBackupFile(directoryHandle, fileName, payload) {
