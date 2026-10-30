@@ -46,7 +46,8 @@ export async function getBackupDirectoryHandle() {
   if (typeof indexedDB === 'undefined') {
     return null;
   }
-  return (await withBackupStore('readonly', (store) => store.get(BACKUP_DIRECTORY_HANDLE_KEY))) ?? null;
+  const chosen = await withBackupStore('readonly', (store) => store.get(BACKUP_DIRECTORY_HANDLE_KEY));
+  return chosen ?? (await navigator.storage?.getDirectory?.()) ?? null;
 }
 
 export async function setBackupDirectoryHandle(handle) {

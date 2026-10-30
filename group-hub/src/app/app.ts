@@ -14,6 +14,7 @@ import {
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
+  backupFolderName,
   getBackupStatusForHandle,
   readBackupFile,
   writePreRunBackup,
@@ -281,7 +282,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     try {
       const handle = await getBackupDirectoryHandle();
       if (!handle) {
-        this.flashStatus('Choose a backup folder in the cog menu before sending groups to storage.', 'error');
+        this.flashStatus('No backup location is available, so nothing was moved.', 'error');
         return false;
       }
       if (!(await this.ensureBackupPermission(handle))) {
@@ -524,7 +525,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
     try {
-      const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      const handle = await window.showDirectoryPicker({ mode: 'readwrite', startIn: 'documents' });
       const allowed = await this.ensureBackupPermission(handle);
       if (!allowed) {
         this.flashStatus('Backup folder permission was not granted.', 'error');
@@ -578,7 +579,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     const result = await writeRotatingBackup(handle, payload, { force });
     const latestBackup = result.status.latestBackup;
     await this.saveBackupSettings({
-      folderName: handle.name,
+      folderName: backupFolderName(handle),
       lastBackupAt: latestBackup?.generatedAt ?? null,
       lastBackupDate: latestBackup?.backupDate ?? null,
       lastBackupFile: latestBackup?.fileName ?? null,

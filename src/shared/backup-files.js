@@ -1,6 +1,10 @@
 import { BACKUP_FILE_NAMES, PRE_RUN_BACKUP_FILE_NAME } from './constants.js';
 import { chooseBackupFileName, localDateKey, normalizeBackupPayload } from './backup-format.js';
 
+export function backupFolderName(handle) {
+  return handle.name || 'Chrome profile, this Mac only';
+}
+
 export async function queryBackupPermission(handle) {
   if (!handle?.queryPermission) {
     return 'unsupported';
@@ -72,7 +76,7 @@ export async function getBackupStatusForHandle(handle, settings = {}) {
 
   return {
     configured: true,
-    folderName: handle.name,
+    folderName: backupFolderName(handle),
     permission,
     validBackups,
     latestBackup,
