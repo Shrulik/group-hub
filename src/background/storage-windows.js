@@ -137,6 +137,8 @@ export function createStorageWindows({ refreshSnapshot }) {
       newStorageWindowCount: plan.newStorageWindowCount,
       closingWindowCount: plan.closingWindowIds.length,
       windowsKeptOpen: plan.windowsKeptOpen,
+      recentGroupCount: plan.recentGroupCount,
+      restartBurstTabCount: plan.restartBurstTabCount,
       skippedCurrentGroupCount: plan.skippedCurrentGroups.length,
       audibleTabs: await describeAudibleTabs(plan)
     };

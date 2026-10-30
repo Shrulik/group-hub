@@ -292,7 +292,7 @@
           <button type="button" class="utility-menu__btn" (click)="closeStoragePanel()">Cancel</button>
         </div>
       } @else if (panel.preview.tabCount === 0) {
-        <p class="storage-panel__copy">Nothing to send. No group here qualifies.</p>
+        <p class="storage-panel__copy">Nothing to send. {{ count(panel.preview.recentGroupCount, 'group') }} stay because of recent activity.</p>
         <div class="restore-panel__actions">
           <button type="button" class="utility-menu__btn" (click)="closeStoragePanel()">Close</button>
         </div>
@@ -314,6 +314,12 @@
           <li>{{ count(panel.preview.closingWindowCount, 'window') }} will close because nothing is left in them</li>
           @if (panel.preview.windowsKeptOpen) {
             <li>{{ count(panel.preview.windowsKeptOpen, 'window') }} will stay open with the remaining tabs</li>
+          }
+          @if (panel.preview.recentGroupCount) {
+            <li>{{ count(panel.preview.recentGroupCount, 'group') }} stay because of recent activity</li>
+          }
+          @if (panel.preview.restartBurstTabCount) {
+            <li>{{ count(panel.preview.restartBurstTabCount, 'tab') }} ignored as recent because a Chrome restart touched them</li>
           }
           @if (panel.preview.skippedCurrentGroupCount) {
             <li>The group with your current tab stays</li>

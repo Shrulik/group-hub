@@ -7,6 +7,8 @@ export const STORAGE_MARKER_PREFIX = `data:text/html;charset=utf-8,${encodeURICo
 
 const TAB_GROUP_ID_NONE = -1;
 const FINGERPRINT_MATCH_RATIO = 0.5;
+const RESTART_BURST_SPAN_MS = 5 * 60 * 1000;
+const RESTART_BURST_MIN_WINDOWS = 10;
 
 export function storageMarkerUrl(number, id) {
   const page =
@@ -71,8 +73,29 @@ export function isStorageWindow(window, markerPrefix) {
   return (window.tabs ?? []).some((tab) => (tab.url || tab.pendingUrl || '').startsWith(markerPrefix));
 }
 
-export function lastActivityOfGroup(tabs, recordedActivity = 0) {
-  return tabs.reduce((latest, tab) => Math.max(latest, tab.lastAccessed ?? 0), recordedActivity);
+export function findRestartBurstTabIds(windows) {
+  const stamps = windows
+    .flatMap((window) => (window.tabs ?? []).map((tab) => ({ id: tab.id, at: tab.lastAccessed ?? 0, windowId: window.id })))
+    .filter((stamp) => stamp.at > 0)
+    .sort((a, b) => a.at - b.at);
+  const burstIds = new Set();
+  let start = 0;
+  for (let end = 0; end < stamps.length; end += 1) {
+    while (stamps[end].at - stamps[start].at > RESTART_BURST_SPAN_MS) {
+      start += 1;
+    }
+    const span = stamps.slice(start, end + 1);
+    if (new Set(span.map((stamp) => stamp.windowId)).size >= RESTART_BURST_MIN_WINDOWS) {
+      span.forEach((stamp) => burstIds.add(stamp.id));
+    }
+  }
+  return burstIds;
+}
+
+export function lastActivityOfGroup(tabs, recordedActivity = 0, ignoredTabIds = new Set()) {
+  return tabs
+    .filter((tab) => !ignoredTabIds.has(tab.id))
+    .reduce((latest, tab) => Math.max(latest, tab.lastAccessed ?? 0), recordedActivity);
 }
 
 function packIntoSlots(moves, storageWindows, markerPrefix) {
@@ -105,10 +128,13 @@ export function planStorageRun({
   const storageWindows = normalWindows.filter((window) => isStorageWindow(window, markerPrefix));
   const storageIds = new Set(storageWindows.map((window) => window.id));
   const groupsById = new Map(groups.map((group) => [group.id, group]));
+  const burstTabIds = findRestartBurstTabIds(normalWindows.filter((window) => !storageIds.has(window.id)));
+  const lastSeen = (tab) => (burstTabIds.has(tab.id) ? 0 : tab.lastAccessed ?? 0);
   const moves = [];
   const closingWindowIds = [];
   const skippedCurrentGroups = [];
   let windowsKeptOpen = 0;
+  let recentGroupCount = 0;
 
   for (const window of normalWindows) {
     if (storageIds.has(window.id) || (mode === STORAGE_MODE_WINDOW && window.id !== targetWindowId)) {
@@ -136,10 +162,13 @@ export function planStorageRun({
         allGroupsMove = false;
         continue;
       }
-      const stale = now - lastActivityOfGroup(groupTabs, activity[groupId] ?? 0) >= STALE_AFTER_MS;
+      const stale = now - lastActivityOfGroup(groupTabs, activity[groupId] ?? 0, burstTabIds) >= STALE_AFTER_MS;
       const holdsCurrentTab = window.focused && groupTabs.some((tab) => tab.active);
       if (mode === STORAGE_MODE_STALE && holdsCurrentTab && stale) {
         skippedCurrentGroups.push(groupId);
+      }
+      if (mode === STORAGE_MODE_STALE && !stale) {
+        recentGroupCount += 1;
       }
       if (mode === STORAGE_MODE_STALE && (!stale || holdsCurrentTab)) {
         allGroupsMove = false;
@@ -164,7 +193,7 @@ export function planStorageRun({
         (tab) =>
           !tab.pinned &&
           (tab.groupId === undefined || tab.groupId === TAB_GROUP_ID_NONE) &&
-          (mode === STORAGE_MODE_WINDOW || now - (tab.lastAccessed ?? 0) >= STALE_AFTER_MS)
+          (mode === STORAGE_MODE_WINDOW || now - lastSeen(tab) >= STALE_AFTER_MS)
       );
       if (looseTabs.length) {
         looseTabs.forEach((tab) => movedTabIds.add(tab.id));
@@ -203,6 +232,10 @@ export function planStorageRun({
     slots,
     closingWindowIds,
     windowsKeptOpen,
+    recentGroupCount,
+    restartBurstTabCount: normalWindows
+      .flatMap((window) => window.tabs ?? [])
+      .filter((tab) => burstTabIds.has(tab.id) && now - (tab.lastAccessed ?? 0) < STALE_AFTER_MS).length,
     skippedCurrentGroups,
     rediscardTabIds,
     audibleTabIds: moves.flatMap((move) => move.audible),

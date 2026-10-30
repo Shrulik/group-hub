@@ -46,6 +46,40 @@ describe('storage plan', () => {
     expect(plan(windows, [group(10)]).moves).toEqual([]);
   });
 
+  const restartedWindows = (count) =>
+    Array.from({ length: count }, (_unused, index) => ({
+      id: 100 + index,
+      tabs: [tab({ groupId: 200 + index, active: true, lastAccessed: FRESH - index * 1000 }), ...tabsInGroup(200 + index, 2)]
+    }));
+  const groupsFor = (count) => Array.from({ length: count }, (_unused, index) => group(200 + index));
+
+  it('ignores a burst of recent tabs across many windows as a restart', () => {
+    const result = plan(restartedWindows(12), groupsFor(12));
+    expect(result.groupCount).toBe(12);
+    expect(result.recentGroupCount).toBe(0);
+    expect(result.closingWindowIds.length).toBe(12);
+    expect(result.restartBurstTabCount).toBe(12);
+  });
+
+  it('keeps groups recent when too few windows were touched for a restart', () => {
+    const result = plan(restartedWindows(9), groupsFor(9));
+    expect(result.groupCount).toBe(0);
+    expect(result.recentGroupCount).toBe(9);
+    expect(result.restartBurstTabCount).toBe(0);
+  });
+
+  it('still counts real activity recorded after a restart burst', () => {
+    const result = plan(restartedWindows(12), groupsFor(12), { activity: { 200: FRESH } });
+    expect(result.groupCount).toBe(11);
+    expect(result.recentGroupCount).toBe(1);
+  });
+
+  it('keeps a window burst separate from an older spread of use', () => {
+    const windows = [...restartedWindows(12), { id: 50, tabs: tabsInGroup(60, 2, { lastAccessed: FRESH - 3 * 60 * 60 * 1000 }) }];
+    const result = plan(windows, [...groupsFor(12), group(60)]);
+    expect(result.moves.some((move) => move.groupId === 60)).toBeFalse();
+  });
+
   it('uses recorded activity when lastAccessed is old', () => {
     const windows = [{ id: 1, tabs: tabsInGroup(10, 2) }];
     expect(plan(windows, [group(10)], { activity: { 10: FRESH } }).moves).toEqual([]);
