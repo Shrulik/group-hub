@@ -41,6 +41,22 @@ describe('storage plan', () => {
     expect(result.recentGroups.find((entry) => entry.groupId === 11).keptByWindow).toBeFalse();
   });
 
+  it('sends old tabs from a visible window with no groups', () => {
+    expect(plan([{ id: 2, tabs: [tab()] }], []).closingWindowIds).toEqual([2]);
+  });
+
+  it('keeps ungrouped tabs recorded as used or holding the current tab', () => {
+    expect(plan([{ id: 2, tabs: [tab()] }], [], { windowActivity: { 2: FRESH } }).moves).toEqual([]);
+    expect(plan([{ id: 3, focused: true, tabs: [tab({ active: true }), tab()] }], []).moves).toEqual([]);
+  });
+
+  it('never moves Group Hub pages', () => {
+    const own = tab({ url: 'chrome-extension://own/index.html' });
+    const result = plan([{ id: 2, tabs: [own, tab()] }], [], { ownPagePrefix: 'chrome-extension://own/' });
+    expect(result.moves[0].tabIds).not.toContain(own.id);
+    expect(result.closingWindowIds).toEqual([]);
+  });
+
   it('sends a minimized window with no groups as a Loose group', () => {
     const result = plan([{ id: 1, state: 'minimized', tabs: [tab({ lastAccessed: FRESH }), tab()] }], []);
     expect(result.moves.map((move) => move.kind)).toEqual(['loose']);
@@ -161,7 +177,7 @@ describe('storage plan', () => {
     expect(result.recentGroupCount).toBe(2);
     expect(result.recentGroupTabCount).toBe(8);
     expect(result.recentlySeenTabCount).toBe(3);
-    expect(result.untouchedWindowCount).toBe(3);
+    expect(result.untouchedWindowCount).toBe(2);
     expect(result.recentGroups.map((entry) => [entry.groupId, entry.seenTabCount, entry.tabCount, entry.recorded])).toEqual(
       jasmine.arrayWithExactContents([[10, 1, 5, true], [11, 2, 3, false]])
     );
@@ -253,10 +269,9 @@ describe('storage plan', () => {
     expect(result.moves.find((move) => move.kind === 'loose').slot).toBe(1);
   });
 
-  it('leaves loose tabs alone when a group stays or the window has no groups', () => {
+  it('leaves loose tabs alone when a group stays', () => {
     const mixed = [{ id: 1, tabs: [tab(), ...tabsInGroup(10, 1), ...tabsInGroup(11, 1, { lastAccessed: FRESH })] }];
     expect(plan(mixed, [group(10), group(11)]).looseTabCount).toBe(0);
-    expect(plan([{ id: 2, tabs: [tab()] }], []).moves).toEqual([]);
   });
 
   it('counts a window as closing when everything leaves it', () => {

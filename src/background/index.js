@@ -591,7 +591,7 @@ function registerListeners() {
     void ready.then(async () => {
       try {
         const tab = await chrome.tabs.get(tabId);
-        storageWindows.touchGroup(tab.groupId);
+        storageWindows.touchTab(tab);
         await storageWindows.popOutActivatedTab(tabId);
       } catch (error) {
         console.debug('[GroupHub] activated tab not handled', error);

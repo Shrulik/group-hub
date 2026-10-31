@@ -3,7 +3,8 @@ import {
   SESSION_READY_DELAY_MINUTES,
   STORAGE_ACTIVITY_KEY,
   STORAGE_SESSION_KEY,
-  STORAGE_STATE_KEY
+  STORAGE_STATE_KEY,
+  STORAGE_WINDOW_ACTIVITY_KEY
 } from '../shared/constants.js';
 import {
   STORAGE_MODE_STALE,
@@ -11,6 +12,7 @@ import {
   findMatchingGroupId,
   fingerprintGroup,
   fingerprintsMatch,
+  hashUrl,
   isStorageWindow,
   planStorageRun,
   storageMarkerUrl
@@ -32,19 +34,22 @@ export function createStorageWindows({ refreshSnapshot }) {
   let state = { stored: {}, contexts: {} };
   let activity = {};
   let dirtyActivity = new Set();
+  let windowActivity = {};
+  let dirtyWindows = new Set();
   let activityTimer;
   let sessionReady = false;
 
   const markerPrefix = () => STORAGE_MARKER_PREFIX;
 
   async function load() {
-    const stored = await chrome.storage.local.get([STORAGE_STATE_KEY, STORAGE_ACTIVITY_KEY]);
+    const stored = await chrome.storage.local.get([STORAGE_STATE_KEY, STORAGE_ACTIVITY_KEY, STORAGE_WINDOW_ACTIVITY_KEY]);
     state = {
       ...stored[STORAGE_STATE_KEY],
       stored: stored[STORAGE_STATE_KEY]?.stored ?? {},
       contexts: stored[STORAGE_STATE_KEY]?.contexts ?? {}
     };
     activity = stored[STORAGE_ACTIVITY_KEY] ?? {};
+    windowActivity = stored[STORAGE_WINDOW_ACTIVITY_KEY] ?? {};
     const session = await chrome.storage.session.get({ [STORAGE_SESSION_KEY]: false });
     sessionReady = session[STORAGE_SESSION_KEY];
     if (!sessionReady && !(await chrome.alarms.get(SESSION_READY_ALARM_NAME))) {
@@ -63,6 +68,8 @@ export function createStorageWindows({ refreshSnapshot }) {
     await chrome.alarms.clear(SESSION_READY_ALARM_NAME);
   }
 
+  const ungroupedTabsOf = (tabs) => tabs.filter((tab) => tab.groupId < 0);
+
   const saveState = () => chrome.storage.local.set({ [STORAGE_STATE_KEY]: state });
 
   async function currentFingerprints() {
@@ -73,6 +80,11 @@ export function createStorageWindows({ refreshSnapshot }) {
         fingerprint: fingerprintGroup(await chrome.tabs.query({ groupId: group.id }))
       }))
     );
+  }
+
+  async function currentWindowFingerprints() {
+    const windows = await chrome.windows.getAll({ populate: true });
+    return windows.map((window) => ({ id: window.id, fingerprint: fingerprintGroup(ungroupedTabsOf(window.tabs)) }));
   }
 
   function remapIds(records, resolve) {
@@ -87,7 +99,7 @@ export function createStorageWindows({ refreshSnapshot }) {
   }
 
   async function reconcileGroupIds() {
-    const hasRecords = Object.keys(state.stored).length || Object.keys(state.contexts).length || Object.keys(activity).length;
+    const hasRecords = Object.keys(state.stored).length || Object.keys(state.contexts).length || Object.keys(activity).length || Object.keys(windowActivity).length;
     if (!hasRecords) {
       return;
     }
@@ -95,8 +107,8 @@ export function createStorageWindows({ refreshSnapshot }) {
     if (!candidates.length) {
       return;
     }
-    const byId = new Map(candidates.map((candidate) => [candidate.id, candidate.fingerprint]));
-    const buildResolver = () => {
+    const buildResolver = (pool = candidates) => {
+      const byId = new Map(pool.map((candidate) => [candidate.id, candidate.fingerprint]));
       const taken = new Set();
       return (id, fingerprint) => {
         if (!fingerprint) {
@@ -105,7 +117,7 @@ export function createStorageWindows({ refreshSnapshot }) {
         const current = byId.get(id);
         const resolved = current && fingerprintsMatch(fingerprint, current)
           ? id
-          : findMatchingGroupId(fingerprint, candidates, taken);
+          : findMatchingGroupId(fingerprint, pool, taken);
         if (resolved !== null) {
           taken.add(resolved);
         }
@@ -115,6 +127,7 @@ export function createStorageWindows({ refreshSnapshot }) {
 
     state.stored = remapIds(state.stored, buildResolver());
     activity = remapIds(activity, buildResolver());
+    windowActivity = remapIds(windowActivity, buildResolver(await currentWindowFingerprints()));
     for (const context of Object.values(state.contexts)) {
       const resolver = buildResolver();
       context.members = context.members.map((member) => ({
@@ -124,18 +137,20 @@ export function createStorageWindows({ refreshSnapshot }) {
     }
 
     await saveState();
-    await chrome.storage.local.set({ [STORAGE_ACTIVITY_KEY]: activity });
+    await chrome.storage.local.set({ [STORAGE_ACTIVITY_KEY]: activity, [STORAGE_WINDOW_ACTIVITY_KEY]: windowActivity });
   }
 
   async function readWindowsAndPlan(mode, windowId) {
     await finishSessionStart();
     const windows = await chrome.windows.getAll({ populate: true });
     const groups = await chrome.tabGroups.query({});
-    const recorded = Object.fromEntries(Object.entries(activity).map(([id, record]) => [id, record.at]));
+    const timesOf = (records) => Object.fromEntries(Object.entries(records).map(([id, record]) => [id, record.at]));
     const plan = planStorageRun({
       windows,
       groups,
-      activity: recorded,
+      activity: timesOf(activity),
+      windowActivity: timesOf(windowActivity),
+      ownPagePrefix: chrome.runtime.getURL(''),
       now: Date.now(),
       mode,
       targetWindowId: windowId ?? null,
@@ -311,7 +326,10 @@ export function createStorageWindows({ refreshSnapshot }) {
       throw new Error(`Group moved ${tabsAfter.length} of ${tabsBefore.length} tabs`);
     }
     await chrome.tabGroups.update(groupId, { collapsed: true });
-    state.stored[groupId] = { fingerprint, contextId: contextId ?? null, movedAt: Date.now() };
+    const pinnedUrls = tabsBefore
+      .filter((tab) => move.pinnedTabIds?.includes(tab.id))
+      .map((tab) => hashUrl(tab.url || tab.pendingUrl || ''));
+    state.stored[groupId] = { fingerprint, contextId: contextId ?? null, movedAt: Date.now(), pinnedUrls };
     if (contextId && move.kind === 'loose') {
       state.contexts[contextId].members.push({ groupId, fingerprint });
     }
@@ -513,8 +531,12 @@ export function createStorageWindows({ refreshSnapshot }) {
       }
 
       const toMove = [groupId, ...members.filter((member) => member.inStorage).map((member) => member.groupId)];
+      const tabsToPin = [];
       for (const id of toMove) {
         await withRetry(() => chrome.tabGroups.move(id, { windowId: targetWindowId, index: -1 }));
+        const pinnedUrls = state.stored[id]?.pinnedUrls ?? [];
+        const groupTabs = await chrome.tabs.query({ groupId: id });
+        tabsToPin.push(...groupTabs.filter((tab) => pinnedUrls.includes(hashUrl(tab.url || tab.pendingUrl || ''))));
         delete state.stored[id];
         recordActivity(id);
       }
@@ -525,6 +547,9 @@ export function createStorageWindows({ refreshSnapshot }) {
       if (placeholder !== null) {
         await chrome.tabs.remove(placeholder);
       }
+      for (const tab of tabsToPin) {
+        await chrome.tabs.update(tab.id, { pinned: true });
+      }
       await removeEmptyStorageWindows();
       await saveState();
       return { windowId: targetWindowId, movedGroups: toMove.length };
@@ -534,15 +559,26 @@ export function createStorageWindows({ refreshSnapshot }) {
     }
   }
 
-  function touchGroup(groupId) {
-    if (!running && sessionReady && typeof groupId === 'number' && groupId >= 0) {
-      recordActivity(groupId);
+  function touchTab(tab) {
+    if (running || !sessionReady) {
+      return;
     }
+    if (tab.groupId >= 0) {
+      recordActivity(tab.groupId);
+      return;
+    }
+    windowActivity[tab.windowId] = { ...windowActivity[tab.windowId], at: Date.now() };
+    dirtyWindows.add(tab.windowId);
+    scheduleActivitySave();
   }
 
   function recordActivity(groupId) {
     activity[groupId] = { ...activity[groupId], at: Date.now() };
     dirtyActivity.add(groupId);
+    scheduleActivitySave();
+  }
+
+  function scheduleActivitySave() {
     if (activityTimer === undefined) {
       activityTimer = setTimeout(() => void persistActivity(), ACTIVITY_PERSIST_MS);
     }
@@ -560,8 +596,17 @@ export function createStorageWindows({ refreshSnapshot }) {
         delete activity[id];
       }
     }
+    const windowIds = [...dirtyWindows];
+    dirtyWindows = new Set();
+    for (const id of windowIds) {
+      try {
+        windowActivity[id].fingerprint = fingerprintGroup(ungroupedTabsOf(await chrome.tabs.query({ windowId: id })));
+      } catch (error) {
+        delete windowActivity[id];
+      }
+    }
     try {
-      await chrome.storage.local.set({ [STORAGE_ACTIVITY_KEY]: activity });
+      await chrome.storage.local.set({ [STORAGE_ACTIVITY_KEY]: activity, [STORAGE_WINDOW_ACTIVITY_KEY]: windowActivity });
     } catch (error) {
       console.error('[GroupHub] failed to save group activity', error);
     }
@@ -578,7 +623,7 @@ export function createStorageWindows({ refreshSnapshot }) {
     groupInfo,
     popOut,
     popOutActivatedTab,
-    touchGroup,
+    touchTab,
     isRunning: () => running,
     isSessionReady: () => sessionReady
   };

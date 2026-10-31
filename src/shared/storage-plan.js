@@ -141,6 +141,8 @@ export function planStorageRun({
   windows,
   groups,
   activity = {},
+  windowActivity = {},
+  ownPagePrefix = null,
   now,
   mode,
   targetWindowId = null,
@@ -181,7 +183,10 @@ export function planStorageRun({
       }
     }
 
-    const ungroupedTabs = tabs.filter((tab) => tab.groupId === undefined || tab.groupId === TAB_GROUP_ID_NONE);
+    const isOwnPage = (tab) => ownPagePrefix !== null && (tab.url || tab.pendingUrl || '').startsWith(ownPagePrefix);
+    const ungroupedTabs = tabs.filter(
+      (tab) => (tab.groupId === undefined || tab.groupId === TAB_GROUP_ID_NONE) && !isOwnPage(tab)
+    );
     if (mode === STORAGE_MODE_WINDOW) {
       ungroupedTabCount = ungroupedTabs.length;
     }
@@ -189,7 +194,7 @@ export function planStorageRun({
     const isContext = tabsByGroup.size + Math.min(ungroupedTabs.length, 1) >= 2 && tabs.length < CONTEXT_WINDOW_TAB_LIMIT;
     const memberGroupIds = isContext ? [...tabsByGroup.keys()] : [];
     const movedTabIds = new Set();
-    let allGroupsMove = isMinimized || tabsByGroup.size > 0;
+    let allGroupsMove = true;
     const seenTabsOf = (groupTabs) => groupTabs.filter((tab) => now - lastSeen(tab) < STALE_AFTER_MS);
     const recordedRecently = (groupId) => now - (activity[groupId] ?? 0) < STALE_AFTER_MS;
     const isOldOnItsOwn = (groupId, groupTabs) =>
@@ -197,7 +202,9 @@ export function planStorageRun({
     const holdsCurrent = (groupTabs) => window.focused && groupTabs.some((tab) => tab.active);
     const ungroupedInUse =
       ungroupedTabs.length > 0 &&
-      seenTabsOf(ungroupedTabs).length >= Math.min(RECENT_TABS_TO_KEEP_GROUP, ungroupedTabs.length);
+      (now - (windowActivity[window.id] ?? 0) < STALE_AFTER_MS ||
+        holdsCurrent(ungroupedTabs) ||
+        seenTabsOf(ungroupedTabs).length >= Math.min(RECENT_TABS_TO_KEEP_GROUP, ungroupedTabs.length));
     const windowInUse =
       ungroupedInUse ||
       [...tabsByGroup].some(
