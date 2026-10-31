@@ -17,6 +17,7 @@ import {
   planStorageRun,
   storageMarkerUrl
 } from '../shared/storage-plan.js';
+import { createWorkerLifecycle } from '../shared/worker-lifecycle.js';
 
 const STORAGE_WINDOW_WIDTH = 480;
 const STORAGE_WINDOW_HEIGHT = 360;
@@ -30,14 +31,13 @@ const BLANK_URL = 'about:blank';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function createStorageWindows({ refreshSnapshot }) {
-  let running = false;
   let state = { stored: {}, contexts: {} };
   let activity = {};
   let dirtyActivity = new Set();
   let windowActivity = {};
   let dirtyWindows = new Set();
   let activityTimer;
-  let sessionReady = false;
+  const lifecycle = createWorkerLifecycle(startSession);
 
   const markerPrefix = () => STORAGE_MARKER_PREFIX;
 
@@ -51,19 +51,16 @@ export function createStorageWindows({ refreshSnapshot }) {
     activity = stored[STORAGE_ACTIVITY_KEY] ?? {};
     windowActivity = stored[STORAGE_WINDOW_ACTIVITY_KEY] ?? {};
     const session = await chrome.storage.session.get({ [STORAGE_SESSION_KEY]: false });
-    sessionReady = session[STORAGE_SESSION_KEY];
-    if (!sessionReady && !(await chrome.alarms.get(SESSION_READY_ALARM_NAME))) {
+    if (session[STORAGE_SESSION_KEY]) {
+      lifecycle.resumeReady();
+    } else if (!(await chrome.alarms.get(SESSION_READY_ALARM_NAME))) {
       await chrome.alarms.create(SESSION_READY_ALARM_NAME, { delayInMinutes: SESSION_READY_DELAY_MINUTES });
     }
   }
 
-  async function finishSessionStart() {
-    if (sessionReady) {
-      return;
-    }
+  async function startSession() {
     await reconcileGroupIds();
     await discardStoredTabs();
-    sessionReady = true;
     await chrome.storage.session.set({ [STORAGE_SESSION_KEY]: true });
     await chrome.alarms.clear(SESSION_READY_ALARM_NAME);
   }
@@ -141,7 +138,7 @@ export function createStorageWindows({ refreshSnapshot }) {
   }
 
   async function readWindowsAndPlan(mode, windowId) {
-    await finishSessionStart();
+    await lifecycle.finishStart();
     const windows = await chrome.windows.getAll({ populate: true });
     const groups = await chrome.tabGroups.query({});
     const timesOf = (records) => Object.fromEntries(Object.entries(records).map(([id, record]) => [id, record.at]));
@@ -337,52 +334,49 @@ export function createStorageWindows({ refreshSnapshot }) {
     return { groupId, fingerprint };
   }
 
-  async function run(mode = STORAGE_MODE_STALE, windowId) {
-    assertNotRunning();
-    running = true;
-    try {
-      const { plan, windows } = await readWindowsAndPlan(mode, windowId);
-      if (plan.audibleTabIds.length) {
-        return { blocked: 'audible', audibleTabs: await describeAudibleTabs(plan) };
-      }
+  function run(mode = STORAGE_MODE_STALE, windowId) {
+    return lifecycle.exclusive(() => moveToStorage(mode, windowId), () => refreshSnapshot('storage run finished'));
+  }
 
-      state.incompleteRun = true;
-      const contextIds = await ensureContexts(plan);
-      await saveState();
-      const placeholders = await clearActiveTabs(plan, windows);
-      const slotWindows = await resolveSlotWindows(plan, windows);
-      let movedGroups = 0;
-      let failed = 0;
-
-      for (const move of plan.moves) {
-        try {
-          await moveEntry(move, slotWindows[move.slot], contextIds.get(move.sourceWindowId));
-          await discardTabs(move.tabIds);
-          movedGroups += 1;
-        } catch (error) {
-          console.error('[GroupHub] failed to move group to storage', error);
-          failed += 1;
-        }
-      }
-
-      await discardTabs(plan.rediscardTabIds);
-      for (const placeholder of placeholders) {
-        try {
-          await chrome.tabs.remove(placeholder);
-        } catch (error) {
-          console.debug('[GroupHub] unable to remove placeholder tab', error);
-        }
-      }
-      await sleep(MINIMIZE_RETRY_MS);
-      await discardStorageMarkers();
-      state.incompleteRun = failed > 0;
-      await saveState();
-
-      return { movedGroups, tabCount: plan.tabCount, failed };
-    } finally {
-      running = false;
-      await refreshSnapshot('storage run finished');
+  async function moveToStorage(mode, windowId) {
+    const { plan, windows } = await readWindowsAndPlan(mode, windowId);
+    if (plan.audibleTabIds.length) {
+      return { blocked: 'audible', audibleTabs: await describeAudibleTabs(plan) };
     }
+
+    state.incompleteRun = true;
+    const contextIds = await ensureContexts(plan);
+    await saveState();
+    const placeholders = await clearActiveTabs(plan, windows);
+    const slotWindows = await resolveSlotWindows(plan, windows);
+    let movedGroups = 0;
+    let failed = 0;
+
+    for (const move of plan.moves) {
+      try {
+        await moveEntry(move, slotWindows[move.slot], contextIds.get(move.sourceWindowId));
+        await discardTabs(move.tabIds);
+        movedGroups += 1;
+      } catch (error) {
+        console.error('[GroupHub] failed to move group to storage', error);
+        failed += 1;
+      }
+    }
+
+    await discardTabs(plan.rediscardTabIds);
+    for (const placeholder of placeholders) {
+      try {
+        await chrome.tabs.remove(placeholder);
+      } catch (error) {
+        console.debug('[GroupHub] unable to remove placeholder tab', error);
+      }
+    }
+    await sleep(MINIMIZE_RETRY_MS);
+    await discardStorageMarkers();
+    state.incompleteRun = failed > 0;
+    await saveState();
+
+    return { movedGroups, tabCount: plan.tabCount, failed };
   }
 
   async function discardStoredTabs() {
@@ -416,24 +410,8 @@ export function createStorageWindows({ refreshSnapshot }) {
     }
   }
 
-  function assertNotRunning() {
-    if (running) {
-      throw new Error('Group Hub is still working. Try again when it finishes.');
-    }
-  }
-
-  async function runQuietly(action) {
-    assertNotRunning();
-    running = true;
-    try {
-      return await action();
-    } finally {
-      running = false;
-    }
-  }
-
   async function unloadIfStored(tab) {
-    if (running || tab.audible || tab.discarded) {
+    if (lifecycle.isWorking() || tab.audible || tab.discarded) {
       return;
     }
     try {
@@ -463,7 +441,7 @@ export function createStorageWindows({ refreshSnapshot }) {
   }
 
   async function groupInfo(groupId) {
-    await finishSessionStart();
+    await lifecycle.finishStart();
     const isStored = await storedGroupIdsInStorage();
     if (!(await isStored(groupId))) {
       return { inStorage: false, contextMembers: [] };
@@ -490,7 +468,7 @@ export function createStorageWindows({ refreshSnapshot }) {
   }
 
   async function popOutActivatedTab(tabId) {
-    if (running || !sessionReady) {
+    if (!lifecycle.isReady()) {
       return;
     }
     const tab = await chrome.tabs.get(tabId);
@@ -502,65 +480,64 @@ export function createStorageWindows({ refreshSnapshot }) {
     if (!marker) {
       return;
     }
-    await chrome.tabs.update(marker.id, { active: true });
-    const minimizing = chrome.windows.update(tab.windowId, { state: 'minimized' });
-    await popOut(tab.groupId, 'group', tabId);
-    await minimizing;
-    await discardStorageMarkers();
+    await lifecycle.exclusive(async () => {
+      await chrome.tabs.update(marker.id, { active: true });
+      const minimizing = chrome.windows.update(tab.windowId, { state: 'minimized' });
+      await moveOutOfStorage(tab.groupId, 'group', tabId);
+      await minimizing;
+      await discardStorageMarkers();
+    }, () => refreshSnapshot('storage pop out'));
   }
 
-  async function popOut(groupId, scope, tabToShowId) {
-    assertNotRunning();
-    running = true;
-    try {
-      const info = await groupInfo(groupId);
-      if (!info.inStorage) {
-        throw new Error('That group is not in a storage window');
-      }
-      const members = scope === 'context' ? info.contextMembers : [];
-      const stayed = members.find((member) => !member.inStorage);
-      let targetWindowId;
-      let placeholder = null;
-      if (stayed) {
-        targetWindowId = (await chrome.tabGroups.get(stayed.groupId)).windowId;
-        await chrome.windows.update(targetWindowId, { focused: true, state: 'normal' });
-      } else {
-        const created = await chrome.windows.create({ url: BLANK_URL, focused: true });
-        targetWindowId = created.id;
-        placeholder = created.tabs[0].id;
-      }
+  function popOut(groupId, scope) {
+    return lifecycle.exclusive(() => moveOutOfStorage(groupId, scope), () => refreshSnapshot('storage pop out'));
+  }
 
-      const toMove = [groupId, ...members.filter((member) => member.inStorage).map((member) => member.groupId)];
-      const tabsToPin = [];
-      for (const id of toMove) {
-        await withRetry(() => chrome.tabGroups.move(id, { windowId: targetWindowId, index: -1 }));
-        const pinnedUrls = state.stored[id]?.pinnedUrls ?? [];
-        const groupTabs = await chrome.tabs.query({ groupId: id });
-        tabsToPin.push(...groupTabs.filter((tab) => pinnedUrls.includes(hashUrl(tab.url || tab.pendingUrl || ''))));
-        delete state.stored[id];
-        recordActivity(id);
-      }
-
-      await chrome.tabGroups.update(groupId, { collapsed: false });
-      const [firstTab] = await chrome.tabs.query({ groupId });
-      await chrome.tabs.update(tabToShowId ?? firstTab.id, { active: true });
-      if (placeholder !== null) {
-        await chrome.tabs.remove(placeholder);
-      }
-      for (const tab of tabsToPin) {
-        await chrome.tabs.update(tab.id, { pinned: true });
-      }
-      await removeEmptyStorageWindows();
-      await saveState();
-      return { windowId: targetWindowId, movedGroups: toMove.length };
-    } finally {
-      running = false;
-      await refreshSnapshot('storage pop out');
+  async function moveOutOfStorage(groupId, scope, tabToShowId) {
+    const info = await groupInfo(groupId);
+    if (!info.inStorage) {
+      throw new Error('That group is not in a storage window');
     }
+    const members = scope === 'context' ? info.contextMembers : [];
+    const stayed = members.find((member) => !member.inStorage);
+    let targetWindowId;
+    let placeholder = null;
+    if (stayed) {
+      targetWindowId = (await chrome.tabGroups.get(stayed.groupId)).windowId;
+      await chrome.windows.update(targetWindowId, { focused: true, state: 'normal' });
+    } else {
+      const created = await chrome.windows.create({ url: BLANK_URL, focused: true });
+      targetWindowId = created.id;
+      placeholder = created.tabs[0].id;
+    }
+
+    const toMove = [groupId, ...members.filter((member) => member.inStorage).map((member) => member.groupId)];
+    const tabsToPin = [];
+    for (const id of toMove) {
+      await withRetry(() => chrome.tabGroups.move(id, { windowId: targetWindowId, index: -1 }));
+      const pinnedUrls = state.stored[id]?.pinnedUrls ?? [];
+      const groupTabs = await chrome.tabs.query({ groupId: id });
+      tabsToPin.push(...groupTabs.filter((tab) => pinnedUrls.includes(hashUrl(tab.url || tab.pendingUrl || ''))));
+      delete state.stored[id];
+      recordActivity(id);
+    }
+
+    await chrome.tabGroups.update(groupId, { collapsed: false });
+    const [firstTab] = await chrome.tabs.query({ groupId });
+    await chrome.tabs.update(tabToShowId ?? firstTab.id, { active: true });
+    if (placeholder !== null) {
+      await chrome.tabs.remove(placeholder);
+    }
+    for (const tab of tabsToPin) {
+      await chrome.tabs.update(tab.id, { pinned: true });
+    }
+    await removeEmptyStorageWindows();
+    await saveState();
+    return { windowId: targetWindowId, movedGroups: toMove.length };
   }
 
   function touchTab(tab) {
-    if (running || !sessionReady) {
+    if (!lifecycle.isReady()) {
       return;
     }
     if (tab.groupId >= 0) {
@@ -617,14 +594,13 @@ export function createStorageWindows({ refreshSnapshot }) {
     preview,
     run,
     unloadIfStored,
-    runQuietly,
+    exclusive: lifecycle.exclusive,
     reconcileGroupIds,
-    finishSessionStart,
+    finishSessionStart: lifecycle.finishStart,
     groupInfo,
     popOut,
     popOutActivatedTab,
     touchTab,
-    isRunning: () => running,
-    isSessionReady: () => sessionReady
+    isReady: lifecycle.isReady
   };
 }

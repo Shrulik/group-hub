@@ -173,7 +173,7 @@ async function handleImport(payload, mode = RESTORE_MODE_APPEND) {
       : normalized.capturesAllTabs
         ? await collectAllTabIds()
         : await collectCurrentGroupedTabIds();
-  const result = await storageWindows.runQuietly(async () => {
+  const result = await storageWindows.exclusive(async () => {
     const created = await createGroupsFromBackup(normalized);
     if (mode === RESTORE_MODE_REPLACE) {
       if (created.createdTabs !== normalized.tabCount) {
@@ -184,10 +184,10 @@ async function handleImport(payload, mode = RESTORE_MODE_APPEND) {
         created.removedTabs = replaceTabIds.length;
       }
     }
+    await storageWindows.reconcileGroupIds();
     return created;
   });
 
-  await storageWindows.reconcileGroupIds();
   await refreshSnapshot('import completed');
 
   return result;
@@ -357,7 +357,7 @@ async function saveBackupSettings(settings) {
 }
 
 async function captureBackups() {
-  if (storageWindows.isRunning() || !storageWindows.isSessionReady()) {
+  if (!storageWindows.isReady()) {
     return;
   }
   try {
