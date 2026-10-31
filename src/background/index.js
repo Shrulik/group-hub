@@ -580,8 +580,9 @@ function registerListeners() {
       try {
         const tab = await chrome.tabs.get(tabId);
         storageWindows.touchGroup(tab.groupId);
+        await storageWindows.popOutActivatedTab(tabId);
       } catch (error) {
-        console.debug('[GroupHub] activated tab no longer open', error);
+        console.debug('[GroupHub] activated tab not handled', error);
       }
     });
   });

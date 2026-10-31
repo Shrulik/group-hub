@@ -57,6 +57,7 @@ export function createStorageWindows({ refreshSnapshot }) {
       return;
     }
     await reconcileGroupIds();
+    await discardStoredTabs();
     sessionReady = true;
     await chrome.storage.session.set({ [STORAGE_SESSION_KEY]: true });
     await chrome.alarms.clear(SESSION_READY_ALARM_NAME);
@@ -293,6 +294,9 @@ export function createStorageWindows({ refreshSnapshot }) {
   async function moveEntry(move, targetWindowId, contextId) {
     let groupId = move.groupId;
     if (move.kind === 'loose') {
+      for (const tabId of move.pinnedTabIds) {
+        await chrome.tabs.update(tabId, { pinned: false });
+      }
       groupId = await chrome.tabs.group({
         tabIds: move.tabIds,
         createProperties: { windowId: move.sourceWindowId }
@@ -360,6 +364,14 @@ export function createStorageWindows({ refreshSnapshot }) {
     } finally {
       running = false;
       await refreshSnapshot('storage run finished');
+    }
+  }
+
+  async function discardStoredTabs() {
+    for (const window of await storageWindowsWithTabs()) {
+      if (window.state === 'minimized') {
+        await discardTabs(window.tabs.filter((tab) => !tab.active && !tab.audible).map((tab) => tab.id));
+      }
     }
   }
 
@@ -459,7 +471,27 @@ export function createStorageWindows({ refreshSnapshot }) {
     return { inStorage: true, contextMembers: others };
   }
 
-  async function popOut(groupId, scope) {
+  async function popOutActivatedTab(tabId) {
+    if (running || !sessionReady) {
+      return;
+    }
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.groupId < 0) {
+      return;
+    }
+    const pinnedTabs = await chrome.tabs.query({ windowId: tab.windowId, pinned: true });
+    const marker = pinnedTabs.find((pinned) => (pinned.url || pinned.pendingUrl || '').startsWith(markerPrefix()));
+    if (!marker) {
+      return;
+    }
+    await chrome.tabs.update(marker.id, { active: true });
+    const minimizing = chrome.windows.update(tab.windowId, { state: 'minimized' });
+    await popOut(tab.groupId, 'group', tabId);
+    await minimizing;
+    await discardStorageMarkers();
+  }
+
+  async function popOut(groupId, scope, tabToShowId) {
     assertNotRunning();
     running = true;
     try {
@@ -489,7 +521,7 @@ export function createStorageWindows({ refreshSnapshot }) {
 
       await chrome.tabGroups.update(groupId, { collapsed: false });
       const [firstTab] = await chrome.tabs.query({ groupId });
-      await chrome.tabs.update(firstTab.id, { active: true });
+      await chrome.tabs.update(tabToShowId ?? firstTab.id, { active: true });
       if (placeholder !== null) {
         await chrome.tabs.remove(placeholder);
       }
@@ -545,6 +577,7 @@ export function createStorageWindows({ refreshSnapshot }) {
     finishSessionStart,
     groupInfo,
     popOut,
+    popOutActivatedTab,
     touchGroup,
     isRunning: () => running,
     isSessionReady: () => sessionReady

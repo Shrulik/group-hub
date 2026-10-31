@@ -51,7 +51,7 @@ describe('storage plan', () => {
     ]);
   });
 
-  it('sends everything in a minimized window whatever its last use, except pinned tabs', () => {
+  it('sends everything in a minimized window whatever its last use, including pinned tabs', () => {
     const pinned = tab({ pinned: true, lastAccessed: FRESH });
     const windows = [{
       id: 1,
@@ -62,7 +62,8 @@ describe('storage plan', () => {
     expect(result.moves.map((move) => move.kind)).toEqual(['group', 'loose']);
     expect(result.minimizedWindowCount).toBe(1);
     expect(result.recentGroupCount).toBe(0);
-    expect(result.windowsKeptOpen).toBe(1);
+    expect(result.moves[1].pinnedTabIds).toEqual([pinned.id]);
+    expect(result.closingWindowIds).toEqual([1]);
   });
 
   it('moves a group with only one recently seen tab', () => {

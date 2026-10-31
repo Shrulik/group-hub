@@ -239,7 +239,7 @@ export function planStorageRun({
     if (mode === STORAGE_MODE_STALE && allGroupsMove) {
       const looseTabs = tabs.filter(
         (tab) =>
-          !tab.pinned &&
+          (isMinimized || !tab.pinned) &&
           (tab.groupId === undefined || tab.groupId === TAB_GROUP_ID_NONE) &&
           (isMinimized || now - lastSeen(tab) >= STALE_AFTER_MS)
       );
@@ -251,6 +251,7 @@ export function planStorageRun({
           title: `Loose ${(looseCounter += 1)}`,
           color: 'grey',
           tabIds: looseTabs.map((tab) => tab.id),
+          pinnedTabIds: looseTabs.filter((tab) => tab.pinned).map((tab) => tab.id),
           tabCount: looseTabs.length,
           audible: looseTabs.filter((tab) => tab.audible).map((tab) => tab.id),
           sourceWindowId: window.id,
