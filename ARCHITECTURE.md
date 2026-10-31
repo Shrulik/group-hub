@@ -41,7 +41,7 @@ Responsibilities:
   - `import`: recreates tab groups from an imported payload.
   - `openGroup`: activates and focuses a tab group.
 - Reads groups live when the popup asks (`refresh`) and sends `snapshotChanged` to an open popup after its own actions. Nothing is rebuilt on ordinary tab changes.
-- Every 10 minutes an alarm writes the newer of two `group-hub-latest-*.json` backups by replacing the older, and the first capture of each day also writes a daily backup. Captures skip running storage work and the first 2 minutes of a session.
+- Every 10 minutes an alarm writes the newer of two `group-hub-latest-*.json` backups by replacing the older, and the first capture of each day also writes a dated `group-hub-backup-YYYY-MM-DD.json`. The newest 7 daily backups are kept, then the newest of each older week, with no age limit. Captures skip running storage work and the first 2 minutes of a session.
 - Persists metadata (creation timestamps keyed by group id) between sessions.
 
 Key data flow:
@@ -132,5 +132,5 @@ Files: `src/shared/storage-plan.js` (pure planning), `src/background/storage-win
 - Any tab that finishes loading in a minimized storage window is unloaded again, which covers Chrome's reloads after a restart. Tabs playing audio are left alone.
 - In an old-groups run, ungrouped tabs go into one numbered `Loose N` group per source window, continuing from the highest existing number. The window button moves groups only, and its ungrouped tabs stay.
 - Group ids change on restart, so saved records are matched by tab URLs once per session, 2 minutes after startup or at the first storage action. Activity is not recorded before that.
-- A run has no undo. Sending again retries anything that failed. Each run first writes `group-hub-before-storage-run.json`, separate from the rotating backups, and keeps it while the last run is unfinished, so a retry cannot replace the original layout. Pop-out and restore are refused during a run.
+- A run has no undo. Sending again retries anything that failed. Each run first writes `group-hub-before-storage-run.json`, separate from the other backups, and keeps it while the last run is unfinished, so a retry cannot replace the original layout. Pop-out and restore are refused during a run.
 - Backups cover every normal window: groups, ungrouped and pinned tabs, window state, bounds and active tab. Restore unloads every tab except the active tab in a visible window, and Replace with such a backup closes all current tabs, but only when every tab and group was recreated.

@@ -1,7 +1,8 @@
 // @ts-nocheck
 import {
   buildExportPayload,
-  chooseBackupFileName,
+  chooseBackupFilesToDelete,
+  dailyBackupFileName,
   normalizeBackupPayload
 } from '@group-hub/shared/backup-format';
 
@@ -106,32 +107,16 @@ describe('backup format', () => {
     expect(payload.tabCount).toBe(2);
   });
 
-  it('chooses today slot first, then empty slot, then oldest valid backup', () => {
-    const today = new Date('2026-06-01T10:00:00').getTime();
-    const yesterday = new Date('2026-05-31T10:00:00').getTime();
+  it('keeps seven daily backups, then the newest of each older week', () => {
+    const name = (day) => dailyBackupFileName(`2026-06-${String(day).padStart(2, '0')}`);
+    const names = Array.from({ length: 30 }, (_unused, index) => name(index + 1));
+    const deleted = chooseBackupFilesToDelete(names);
+    const kept = names.filter((fileName) => !deleted.includes(fileName));
+    expect(kept).toEqual([name(7), name(14), name(21), name(23), ...[24, 25, 26, 27, 28, 29, 30].map(name)]);
+  });
 
-    expect(
-      chooseBackupFileName(
-        [{ fileName: 'group-hub-backup-a.json', generatedAt: today, backupDate: '2026-06-01' }],
-        today
-      )
-    ).toBe('group-hub-backup-a.json');
-
-    expect(
-      chooseBackupFileName(
-        [{ fileName: 'group-hub-backup-a.json', generatedAt: yesterday, backupDate: '2026-05-31' }],
-        today
-      )
-    ).toBe('group-hub-backup-b.json');
-
-    expect(
-      chooseBackupFileName(
-        [
-          { fileName: 'group-hub-backup-a.json', generatedAt: yesterday, backupDate: '2026-05-31' },
-          { fileName: 'group-hub-backup-b.json', generatedAt: today - 1, backupDate: '2026-05-30' }
-        ],
-        today
-      )
-    ).toBe('group-hub-backup-a.json');
+  it('deletes nothing at seven backups or from unrelated files', () => {
+    const names = [1, 2, 3, 4, 5, 6, 7].map((day) => dailyBackupFileName(`2026-06-0${day}`));
+    expect(chooseBackupFilesToDelete([...names, 'group-hub-latest-a.json', 'notes.json'])).toEqual([]);
   });
 });

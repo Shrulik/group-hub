@@ -1,5 +1,11 @@
-import { BACKUP_FILE_NAMES, LATEST_BACKUP_FILE_NAMES, PRE_RUN_BACKUP_FILE_NAME } from './constants.js';
-import { chooseBackupFileName, localDateKey, normalizeBackupPayload } from './backup-format.js';
+import { LATEST_BACKUP_FILE_NAMES, LEGACY_BACKUP_FILE_NAMES, PRE_RUN_BACKUP_FILE_NAME } from './constants.js';
+import {
+  chooseBackupFilesToDelete,
+  dailyBackupFileName,
+  localDateKey,
+  normalizeBackupPayload,
+  sortDailyBackupFileNames
+} from './backup-format.js';
 
 export function backupFolderName(handle) {
   return handle.name || 'Chrome profile, this Mac only';
@@ -29,7 +35,15 @@ export async function readBackupFile(directoryHandle, fileName) {
   }
 }
 
-export async function readValidBackups(handle, fileNames = BACKUP_FILE_NAMES) {
+async function listDailyBackupFileNames(handle) {
+  const fileNames = [];
+  for await (const fileName of handle.keys()) {
+    fileNames.push(fileName);
+  }
+  return sortDailyBackupFileNames(fileNames);
+}
+
+export async function readValidBackups(handle, fileNames) {
   const backups = [];
   for (const fileName of fileNames) {
     try {
@@ -72,7 +86,13 @@ export async function getBackupStatusForHandle(handle, settings = {}) {
 
   const permission = await queryBackupPermission(handle);
   const validBackups =
-    permission === 'granted' ? await readValidBackups(handle, [...BACKUP_FILE_NAMES, ...LATEST_BACKUP_FILE_NAMES]) : [];
+    permission === 'granted'
+      ? await readValidBackups(handle, [
+          ...(await listDailyBackupFileNames(handle)).slice(0, 1),
+          ...LEGACY_BACKUP_FILE_NAMES,
+          ...LATEST_BACKUP_FILE_NAMES
+        ])
+      : [];
   const latestBackup = validBackups[0] ?? null;
 
   return {
@@ -93,27 +113,51 @@ export async function writeRotatingBackup(handle, payload, { force = false } = {
     throw new Error('Backup folder permission is required.');
   }
 
-  const validBackups = await readValidBackups(handle);
-  const latestBackup = validBackups[0] ?? null;
-  if (!force && latestBackup?.backupDate === localDateKey()) {
+  const targetFileName = dailyBackupFileName(localDateKey(payload.generatedAt));
+  if (!force && (await listDailyBackupFileNames(handle)).includes(targetFileName)) {
     return {
       status: await getBackupStatusForHandle(handle),
       wrote: false,
-      fileName: latestBackup.fileName
+      fileName: targetFileName
     };
   }
 
   normalizeBackupPayload(payload);
-  const targetFileName = chooseBackupFileName(validBackups, payload.generatedAt);
   await writeBackupFile(handle, targetFileName, payload);
-  const writtenPayload = await readBackupFile(handle, targetFileName);
-  normalizeBackupPayload(writtenPayload);
+  normalizeBackupPayload(await readBackupFile(handle, targetFileName));
+  await migrateLegacyBackups(handle);
+  await pruneDailyBackups(handle);
 
   return {
     status: await getBackupStatusForHandle(handle),
     wrote: true,
     fileName: targetFileName
   };
+}
+
+async function migrateLegacyBackups(handle) {
+  const existing = await listDailyBackupFileNames(handle);
+  for (const fileName of LEGACY_BACKUP_FILE_NAMES) {
+    try {
+      const payload = await readBackupFile(handle, fileName);
+      if (!payload) {
+        continue;
+      }
+      const dated = dailyBackupFileName(normalizeBackupPayload(payload).backupDate);
+      if (!existing.includes(dated)) {
+        await writeBackupFile(handle, dated, payload);
+      }
+      await handle.removeEntry(fileName);
+    } catch (error) {
+      console.error('[GroupHub] unable to migrate old backup', error);
+    }
+  }
+}
+
+async function pruneDailyBackups(handle) {
+  for (const fileName of chooseBackupFilesToDelete(await listDailyBackupFileNames(handle))) {
+    await handle.removeEntry(fileName);
+  }
 }
 
 async function olderLatestFileName(handle) {

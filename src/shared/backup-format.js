@@ -1,5 +1,5 @@
 import {
-  BACKUP_FILE_NAMES,
+  DAILY_BACKUPS_KEPT,
   EXPORT_SCHEMA_VERSION,
   RESTORE_MODE_APPEND,
   RESTORE_MODE_REPLACE,
@@ -141,19 +141,35 @@ export function normalizeBackupPayload(payload) {
   };
 }
 
-export function chooseBackupFileName(validBackups, timestamp = Date.now()) {
-  const today = localDateKey(timestamp);
-  const todayBackup = validBackups.find((backup) => backup.backupDate === today);
-  if (todayBackup) {
-    return todayBackup.fileName;
-  }
-  const emptyName = BACKUP_FILE_NAMES.find(
-    (fileName) => !validBackups.some((backup) => backup.fileName === fileName)
-  );
-  if (emptyName) {
-    return emptyName;
-  }
-  return [...validBackups].sort((a, b) => a.generatedAt - b.generatedAt)[0]?.fileName ?? BACKUP_FILE_NAMES[0];
+export function dailyBackupFileName(dateKey) {
+  return `group-hub-backup-${dateKey}.json`;
+}
+
+function dateKeyOfBackupFile(fileName) {
+  return /^group-hub-backup-(\d{4})-(\d{2})-(\d{2})\.json$/.exec(fileName)?.slice(1).map(Number) ?? null;
+}
+
+export function sortDailyBackupFileNames(fileNames) {
+  return fileNames.filter(dateKeyOfBackupFile).sort().reverse();
+}
+
+function weekOfBackupFile(fileName) {
+  const [year, month, day] = dateKeyOfBackupFile(fileName);
+  const date = new Date(year, month - 1, day);
+  date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+  return localDateKey(date.getTime());
+}
+
+export function chooseBackupFilesToDelete(fileNames) {
+  const olderWeeksSeen = new Set();
+  return sortDailyBackupFileNames(fileNames)
+    .slice(DAILY_BACKUPS_KEPT)
+    .filter((fileName) => {
+      const week = weekOfBackupFile(fileName);
+      const isNewestOfWeek = !olderWeeksSeen.has(week);
+      olderWeeksSeen.add(week);
+      return !isNewestOfWeek;
+    });
 }
 
 function finiteOrUndefined(value) {

@@ -24,6 +24,28 @@ describe('backup files', () => {
     expect(second.wrote).toBeFalse();
     expect(second.fileName).toBe(first.fileName);
   });
+
+  it('moves old a and b backups to dated files and prunes after a write', async () => {
+    const directory = createDirectoryHandle();
+    const legacyAt = new Date('2026-01-15T10:00:00').getTime();
+    await (await directory.getFileHandle('group-hub-backup-a.json', { create: true })).createWritable().then((file) =>
+      file.write(JSON.stringify(backupPayload(legacyAt)))
+    );
+    await (await directory.getFileHandle('group-hub-backup-b.json', { create: true })).createWritable().then((file) =>
+      file.write('not json')
+    );
+
+    const result = await writeRotatingBackup(directory, backupPayload(Date.now()), { force: false });
+    const names = [];
+    for await (const name of directory.keys()) {
+      names.push(name);
+    }
+
+    expect(names).toContain('group-hub-backup-2026-01-15.json');
+    expect(names).toContain(result.fileName);
+    expect(names).not.toContain('group-hub-backup-a.json');
+    expect(names).toContain('group-hub-backup-b.json');
+  });
 });
 
 function backupPayload(generatedAt) {
@@ -70,6 +92,12 @@ function createDirectoryHandle() {
   return {
     name: 'Tab-backup',
     queryPermission: jasmine.createSpy('queryPermission').and.resolveTo('granted'),
+    async *keys() {
+      yield* files.keys();
+    },
+    async removeEntry(name) {
+      files.delete(name);
+    },
     async getFileHandle(name, options = {}) {
       if (!files.has(name) && !options.create) {
         throw Object.assign(new Error('Missing file'), { name: 'NotFoundError' });
