@@ -41,6 +41,13 @@ describe('storage plan', () => {
     expect(result.recentGroups.find((entry) => entry.groupId === 11).keptByWindow).toBeFalse();
   });
 
+  it('judges groups alone in a window of 50 tabs or more', () => {
+    const windows = [{ id: 1, tabs: [...tabsInGroup(10, 48), ...tabsInGroup(11, 2, { lastAccessed: FRESH })] }];
+    const result = plan(windows, [group(10), group(11)]);
+    expect(result.moves.map((move) => move.groupId)).toEqual([10]);
+    expect(result.partialWindows.length).toBe(1);
+  });
+
   it('moves groups from other windows when one window is in use', () => {
     const windows = [{ id: 1, tabs: tabsInGroup(11, 2, { lastAccessed: FRESH }) }, { id: 2, tabs: tabsInGroup(10, 2) }];
     expect(plan(windows, [group(10), group(11)]).moves.map((move) => move.groupId)).toEqual([10]);

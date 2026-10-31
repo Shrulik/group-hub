@@ -208,7 +208,7 @@ export function planStorageRun({
       }
       const seenTabs = seenTabsOf(groupTabs);
       const oldOnItsOwn = isOldOnItsOwn(groupId, groupTabs);
-      const stale = isMinimized || !windowInUse;
+      const stale = isMinimized || (oldOnItsOwn && !(isContext && windowInUse));
       const holdsCurrentTab = holdsCurrent(groupTabs);
       if (mode === STORAGE_MODE_STALE && holdsCurrentTab && oldOnItsOwn) {
         skippedCurrentGroups.push(groupId);

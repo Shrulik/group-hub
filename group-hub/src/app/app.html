@@ -310,7 +310,7 @@
       } @else {
         <p class="storage-panel__copy">
           @if (panel.mode === storageModes.stale) {
-            Moves everything in minimized windows, and windows where no group has two tabs used in the last three weeks, into minimized storage windows and unloads their tabs to free memory.
+            Moves everything in minimized windows, and groups with at most one tab used in the last three weeks, into minimized storage windows. In a window under 50 tabs, one recent group keeps all its groups. Their tabs are unloaded to free memory.
           } @else {
             Moves every group in this window into minimized storage windows and unloads their tabs to free memory.
             @if (panel.preview.ungroupedTabCount) {
@@ -345,7 +345,7 @@
             </li>
           }
           @if (panel.preview.restartBurstTabCount) {
-            <li>{{ count(panel.preview.restartBurstTabCount, 'tab') }} count as unused, because their recent date came from a Chrome restart</li>
+            <li>{{ count(panel.preview.restartBurstTabCount, 'tab') }} count as unseen, because their recent modification date is presumed to come from a Chrome restart</li>
           }
           @if (panel.preview.skippedCurrentGroupCount) {
             <li>The group with your current tab stays</li>
