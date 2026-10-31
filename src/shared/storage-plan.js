@@ -157,6 +157,7 @@ export function planStorageRun({
   const skippedCurrentGroups = [];
   let windowsKeptOpen = 0;
   const partialWindows = [];
+  let minimizedWindowCount = 0;
   let recentGroupCount = 0;
   const recentGroups = [];
   let recentGroupTabCount = 0;
@@ -169,6 +170,7 @@ export function planStorageRun({
       continue;
     }
     const tabs = window.tabs ?? [];
+    const isMinimized = mode === STORAGE_MODE_STALE && window.state === 'minimized';
     const tabsByGroup = new Map();
     for (const tab of tabs) {
       if (tab.groupId !== undefined && tab.groupId !== TAB_GROUP_ID_NONE) {
@@ -198,7 +200,7 @@ export function planStorageRun({
       }
       const seenTabs = groupTabs.filter((tab) => now - lastSeen(tab) < STALE_AFTER_MS);
       const recordedRecently = now - (activity[groupId] ?? 0) < STALE_AFTER_MS;
-      const stale = !recordedRecently && seenTabs.length < Math.min(RECENT_TABS_TO_KEEP_GROUP, groupTabs.length);
+      const stale = isMinimized || !recordedRecently && seenTabs.length < Math.min(RECENT_TABS_TO_KEEP_GROUP, groupTabs.length);
       const holdsCurrentTab = window.focused && groupTabs.some((tab) => tab.active);
       if (mode === STORAGE_MODE_STALE && holdsCurrentTab && stale) {
         skippedCurrentGroups.push(groupId);
@@ -239,7 +241,7 @@ export function planStorageRun({
         (tab) =>
           !tab.pinned &&
           (tab.groupId === undefined || tab.groupId === TAB_GROUP_ID_NONE) &&
-          now - lastSeen(tab) >= STALE_AFTER_MS
+          (isMinimized || now - lastSeen(tab) >= STALE_AFTER_MS)
       );
       if (looseTabs.length) {
         looseTabs.forEach((tab) => movedTabIds.add(tab.id));
@@ -258,6 +260,7 @@ export function planStorageRun({
     }
 
     if (movedTabIds.size) {
+      minimizedWindowCount += isMinimized ? 1 : 0;
       if (movedTabIds.size === tabs.length) {
         closingWindowIds.push(window.id);
       } else {
@@ -291,6 +294,7 @@ export function planStorageRun({
     closingWindowIds,
     windowsKeptOpen,
     partialWindows,
+    minimizedWindowCount,
     recentGroupCount,
     recentGroups: recentGroups.sort((a, b) => a.lastSeenAt - b.lastSeenAt),
     recentGroupTabCount,

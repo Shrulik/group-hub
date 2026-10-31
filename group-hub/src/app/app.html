@@ -307,7 +307,7 @@
       } @else {
         <p class="storage-panel__copy">
           @if (panel.mode === storageModes.stale) {
-            Moves groups with at most one tab used in the last three weeks into minimized storage windows and unloads their tabs to free memory.
+            Moves everything in minimized windows, and groups elsewhere with at most one tab used in the last three weeks, into minimized storage windows and unloads their tabs to free memory.
           } @else {
             Moves every group in this window into minimized storage windows and unloads their tabs to free memory.
             @if (panel.preview.ungroupedTabCount) {
@@ -323,6 +323,9 @@
           <li>{{ count(panel.preview.groupCount, 'group') }} with {{ count(panel.preview.groupedTabCount, 'tab') }} move</li>
           @if (panel.preview.looseTabCount) {
             <li>{{ count(panel.preview.looseTabCount, 'ungrouped tab') }} go into numbered Loose groups, one per window, all kept together in one storage window</li>
+          }
+          @if (panel.preview.minimizedWindowCount) {
+            <li>{{ count(panel.preview.minimizedWindowCount, 'minimized window') }} sent whatever their last use</li>
           }
           <li>{{ count(panel.preview.newStorageWindowCount, 'new storage window') }}</li>
           <li>{{ count(panel.preview.closingWindowCount, 'window') }} will close because nothing is left in them</li>
