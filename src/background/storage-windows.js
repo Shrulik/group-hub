@@ -3,6 +3,7 @@ import {
   SESSION_READY_DELAY_MINUTES,
   STORAGE_ACTIVITY_KEY,
   STORAGE_RUN_PROGRESS_KEY,
+  STORAGE_RUN_SUMMARY_KEY,
   STORAGE_SESSION_KEY,
   STORAGE_STATE_KEY,
   STORAGE_WINDOW_ACTIVITY_KEY
@@ -52,7 +53,7 @@ export function createStorageWindows({ refreshSnapshot }) {
     activity = stored[STORAGE_ACTIVITY_KEY] ?? {};
     windowActivity = stored[STORAGE_WINDOW_ACTIVITY_KEY] ?? {};
     await removePlaceholders();
-    await chrome.storage.session.remove(STORAGE_RUN_PROGRESS_KEY);
+    await clearRunProgress();
     const session = await chrome.storage.session.get({ [STORAGE_SESSION_KEY]: false });
     if (session[STORAGE_SESSION_KEY]) {
       lifecycle.resumeReady();
@@ -167,6 +168,14 @@ export function createStorageWindows({ refreshSnapshot }) {
   async function preview(mode, windowId) {
     const { plan } = await readWindowsAndPlan(mode, windowId);
     return {
+      ...summarizePlan(plan),
+      incompleteRun: Boolean(state.incompleteRun),
+      audibleTabs: await describeAudibleTabs(plan)
+    };
+  }
+
+  function summarizePlan(plan) {
+    return {
       groupCount: plan.groupCount,
       looseTabCount: plan.looseTabCount,
       tabCount: plan.tabCount,
@@ -182,10 +191,8 @@ export function createStorageWindows({ refreshSnapshot }) {
       untouchedWindowCount: plan.untouchedWindowCount,
       groupedTabCount: plan.groupedTabCount,
       ungroupedTabCount: plan.ungroupedTabCount,
-      incompleteRun: Boolean(state.incompleteRun),
       restartBurstTabCount: plan.restartBurstTabCount,
-      skippedCurrentGroupCount: plan.skippedCurrentGroups.length,
-      audibleTabs: await describeAudibleTabs(plan)
+      skippedCurrentGroupCount: plan.skippedCurrentGroups.length
     };
   }
 
@@ -266,6 +273,8 @@ export function createStorageWindows({ refreshSnapshot }) {
     state.placeholderTabIds = [];
     await saveState();
   }
+
+  const clearRunProgress = () => chrome.storage.session.remove([STORAGE_RUN_PROGRESS_KEY, STORAGE_RUN_SUMMARY_KEY]);
 
   const reportProgress = (moved, total, failed) =>
     chrome.storage.session.set({ [STORAGE_RUN_PROGRESS_KEY]: { moved, total, failed } });
@@ -363,7 +372,7 @@ export function createStorageWindows({ refreshSnapshot }) {
       try {
         return await moveToStorage(mode, windowId);
       } finally {
-        await chrome.storage.session.remove(STORAGE_RUN_PROGRESS_KEY);
+        await clearRunProgress();
       }
     }, () => refreshSnapshot('storage run finished'));
   }
@@ -381,6 +390,9 @@ export function createStorageWindows({ refreshSnapshot }) {
     const slotWindows = await resolveSlotWindows(plan, windows);
     let movedGroups = 0;
     let failed = 0;
+    await chrome.storage.session.set({
+      [STORAGE_RUN_SUMMARY_KEY]: { mode, preview: { ...summarizePlan(plan), incompleteRun: false, audibleTabs: [] } }
+    });
     await reportProgress(0, plan.moves.length, 0);
 
     for (const move of plan.moves) {

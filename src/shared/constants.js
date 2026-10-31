@@ -8,6 +8,7 @@ export const STORAGE_STATE_KEY = 'tgm.storageState';
 export const STORAGE_ACTIVITY_KEY = 'tgm.groupActivity';
 export const STORAGE_WINDOW_ACTIVITY_KEY = 'tgm.windowActivity';
 export const STORAGE_RUN_PROGRESS_KEY = 'tgm.storageRunProgress';
+export const STORAGE_RUN_SUMMARY_KEY = 'tgm.storageRunSummary';
 export const STORAGE_SESSION_KEY = 'tgm.storageSessionStarted';
 export const LEGACY_BACKUP_ALARM_NAME = 'tgm.dailyBackup';
 export const BACKUP_ALARM_NAME = 'tgm.periodicBackup';

@@ -25,7 +25,7 @@ import {
   getProfileBackupHandle,
   setBackupDirectoryHandle
 } from '@group-hub/shared/backup-storage';
-import { BACKUP_SETTINGS_KEY, PRE_RUN_BACKUP_FILE_NAME, STORAGE_RUN_PROGRESS_KEY } from '@group-hub/shared/constants';
+import { BACKUP_SETTINGS_KEY, PRE_RUN_BACKUP_FILE_NAME, STORAGE_RUN_PROGRESS_KEY, STORAGE_RUN_SUMMARY_KEY } from '@group-hub/shared/constants';
 import { STORAGE_MODE_STALE, STORAGE_MODE_WINDOW } from '@group-hub/shared/storage-plan';
 import { GroupHubStore } from './services/group-hub.store';
 
@@ -247,8 +247,15 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
   }
 
   storageRunProgressListener = (changes, area) => {
-    if (area === 'session' && changes[STORAGE_RUN_PROGRESS_KEY]) {
-      this.storageRunProgress.set(changes[STORAGE_RUN_PROGRESS_KEY].newValue ?? null);
+    if (area !== 'session' || !changes[STORAGE_RUN_PROGRESS_KEY]) {
+      return;
+    }
+    const progress = changes[STORAGE_RUN_PROGRESS_KEY].newValue ?? null;
+    const last = this.storageRunProgress();
+    this.storageRunProgress.set(progress);
+    if (!progress && last && this.storagePanel()?.joinedRun) {
+      this.storagePanel.set(null);
+      this.flashRunResult(last.moved, last.failed);
     }
   };
 
@@ -284,11 +291,10 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async openStoragePanel(mode) {
-    if (this.storageRunProgress()) {
-      this.flashStatus('Group Hub is still sending to storage. Try again when it finishes.', 'error');
-      return;
-    }
     try {
+      if (this.storageRunProgress() && (await this.joinRunningStorageRun())) {
+        return;
+      }
       const windowId = await this.targetWindowFor(mode);
       const preview = await this.store.storageRequest('storagePreview', { mode, windowId });
       this.storagePanel.set({ mode, windowId, preview });
@@ -296,6 +302,23 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
       console.error('[GroupHub] storage preview failed', error);
       this.flashStatus('Unable to check which groups would move.', 'error');
     }
+  }
+
+  async joinRunningStorageRun() {
+    const stored = await chrome.storage.session.get(STORAGE_RUN_SUMMARY_KEY);
+    const summary = stored[STORAGE_RUN_SUMMARY_KEY];
+    if (!summary) {
+      return false;
+    }
+    this.storagePanel.set({ ...summary, running: true, joinedRun: true });
+    return true;
+  }
+
+  flashRunResult(movedGroups, failed) {
+    this.flashStatus(
+      `${this.count(movedGroups, 'group')} stored${failed ? `, ${failed} failed. Send again to retry` : ''}.`,
+      failed ? 'error' : 'success'
+    );
   }
 
   closeStoragePanel() {
@@ -321,10 +344,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
         this.storagePanel.set({ ...panel, preview: { ...panel.preview, audibleTabs: result.audibleTabs } });
       } else if (result) {
         this.storagePanel.set(null);
-        this.flashStatus(
-          `${this.count(result.movedGroups, 'group')} stored${result.failed ? `, ${result.failed} failed. Send again to retry` : ''}.`,
-          result.failed ? 'error' : 'success'
-        );
+        this.flashRunResult(result.movedGroups, result.failed);
       }
     } catch (error) {
       console.error('[GroupHub] storage run failed', error);

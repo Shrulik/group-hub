@@ -408,6 +408,11 @@
               <p class="storage-panel__copy">Saving a backup first…</p>
             }
           </div>
+          @if (panel.joinedRun) {
+            <div class="restore-panel__actions">
+              <button type="button" class="utility-menu__btn" (click)="closeStoragePanel()">Close</button>
+            </div>
+          }
         } @else {
           <div class="restore-panel__actions">
             <button type="button" class="utility-menu__btn" (click)="confirmStorageRun()">
