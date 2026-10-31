@@ -181,13 +181,12 @@ export function planStorageRun({
       }
     }
 
+    const ungroupedTabs = tabs.filter((tab) => tab.groupId === undefined || tab.groupId === TAB_GROUP_ID_NONE);
     if (mode === STORAGE_MODE_WINDOW) {
-      ungroupedTabCount = tabs.filter(
-        (tab) => !tab.pinned && (tab.groupId === undefined || tab.groupId === TAB_GROUP_ID_NONE)
-      ).length;
+      ungroupedTabCount = ungroupedTabs.length;
     }
 
-    const isContext = tabsByGroup.size >= 2 && tabs.length < CONTEXT_WINDOW_TAB_LIMIT;
+    const isContext = tabsByGroup.size + Math.min(ungroupedTabs.length, 1) >= 2 && tabs.length < CONTEXT_WINDOW_TAB_LIMIT;
     const memberGroupIds = isContext ? [...tabsByGroup.keys()] : [];
     const movedTabIds = new Set();
     let allGroupsMove = isMinimized || tabsByGroup.size > 0;
@@ -196,9 +195,14 @@ export function planStorageRun({
     const isOldOnItsOwn = (groupId, groupTabs) =>
       !recordedRecently(groupId) && seenTabsOf(groupTabs).length < Math.min(RECENT_TABS_TO_KEEP_GROUP, groupTabs.length);
     const holdsCurrent = (groupTabs) => window.focused && groupTabs.some((tab) => tab.active);
-    const windowInUse = [...tabsByGroup].some(
-      ([groupId, groupTabs]) => groupsById.has(groupId) && (!isOldOnItsOwn(groupId, groupTabs) || holdsCurrent(groupTabs))
-    );
+    const ungroupedInUse =
+      ungroupedTabs.length > 0 &&
+      seenTabsOf(ungroupedTabs).length >= Math.min(RECENT_TABS_TO_KEEP_GROUP, ungroupedTabs.length);
+    const windowInUse =
+      ungroupedInUse ||
+      [...tabsByGroup].some(
+        ([groupId, groupTabs]) => groupsById.has(groupId) && (!isOldOnItsOwn(groupId, groupTabs) || holdsCurrent(groupTabs))
+      );
 
     for (const [groupId, groupTabs] of tabsByGroup) {
       const group = groupsById.get(groupId);
@@ -246,12 +250,7 @@ export function planStorageRun({
     }
 
     if (mode === STORAGE_MODE_STALE && allGroupsMove) {
-      const looseTabs = tabs.filter(
-        (tab) =>
-          (isMinimized || !tab.pinned) &&
-          (tab.groupId === undefined || tab.groupId === TAB_GROUP_ID_NONE) &&
-          (isMinimized || now - lastSeen(tab) >= STALE_AFTER_MS)
-      );
+      const looseTabs = isMinimized || !ungroupedInUse ? ungroupedTabs : [];
       if (looseTabs.length) {
         looseTabs.forEach((tab) => movedTabIds.add(tab.id));
         moves.push({

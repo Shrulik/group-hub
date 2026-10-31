@@ -62,11 +62,25 @@ describe('storage plan', () => {
   it('explains what stays in a window that keeps some tabs', () => {
     const windows = [{
       id: 1,
-      tabs: [tab({ pinned: true }), tab({ lastAccessed: FRESH }), ...tabsInGroup(10, 2)]
+      tabs: [tab({ pinned: true, lastAccessed: FRESH }), tab({ lastAccessed: FRESH }), ...tabsInGroup(10, 48)]
     }];
     expect(plan(windows, [group(10)]).partialWindows).toEqual([
       { windowId: 1, moving: ['g10'], staying: [], pinnedTabCount: 1, ungroupedTabCount: 1 }
     ]);
+  });
+
+  it('treats a window of ungrouped tabs as one group that one recent tab does not keep', () => {
+    const pinned = tab({ pinned: true });
+    const windows = [{ id: 1, tabs: [pinned, tab({ lastAccessed: FRESH }), tab(), ...tabsInGroup(10, 2)] }];
+    const result = plan(windows, [group(10)]);
+    expect(result.moves.find((move) => move.kind === 'loose').tabCount).toBe(3);
+    expect(result.moves.find((move) => move.kind === 'loose').pinnedTabIds).toEqual([pinned.id]);
+    expect(result.closingWindowIds).toEqual([1]);
+  });
+
+  it('lets two recent ungrouped tabs keep a small window', () => {
+    const windows = [{ id: 1, tabs: [tab({ lastAccessed: FRESH }), tab({ lastAccessed: FRESH }), ...tabsInGroup(10, 2)] }];
+    expect(plan(windows, [group(10)]).moves).toEqual([]);
   });
 
   it('sends everything in a minimized window whatever its last use, including pinned tabs', () => {
@@ -206,18 +220,6 @@ describe('storage plan', () => {
     expect(result.skippedCurrentGroups).toEqual([10]);
   });
 
-  it('wraps stale loose tabs once all groups move, and leaves pinned and fresh tabs', () => {
-    const pinned = tab({ pinned: true });
-    const fresh = tab({ lastAccessed: FRESH });
-    const stale = tab();
-    const windows = [{ id: 1, tabs: [pinned, fresh, stale, ...tabsInGroup(10, 2)] }];
-    const result = plan(windows, [group(10)]);
-    const loose = result.moves.find((move) => move.kind === 'loose');
-    expect(loose.tabIds).toEqual([stale.id]);
-    expect(result.looseTabCount).toBe(1);
-    expect(result.closingWindowIds).toEqual([]);
-  });
-
   it('numbers one Loose group per window, continuing after existing ones', () => {
     const windows = [
       { id: 1, tabs: [tab(), ...tabsInGroup(10, 1)] },
@@ -277,7 +279,7 @@ describe('storage plan', () => {
     const windows = [{ id: 1, focused: true, tabs: [tab(), tab(), tab({ pinned: true })] }];
     const result = plan(windows, [], { mode: STORAGE_MODE_WINDOW, targetWindowId: 1 });
     expect(result.moves).toEqual([]);
-    expect(result.ungroupedTabCount).toBe(2);
+    expect(result.ungroupedTabCount).toBe(3);
   });
 
   it('does not act on a storage window in window mode', () => {
