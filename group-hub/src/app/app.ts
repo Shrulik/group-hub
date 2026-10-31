@@ -47,6 +47,8 @@ const COLOR_PALETTE = {
   orange: '#ff8b02'
 };
 
+const BACKUP_SETUP_QUERY = 'backup-setup';
+
 @Component({
   selector: 'app-root',
   standalone: true,
@@ -121,12 +123,14 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     dateStyle: 'medium',
     timeStyle: 'short'
   });
+  openedForBackupSetup = location.search.includes(BACKUP_SETUP_QUERY);
   focusHandler = () => {
     void this.store.refresh();
     void this.loadSelectedTabs();
   };
 
   async ngOnInit() {
+    this.backupPanelVisible.set(this.openedForBackupSetup);
     try {
       await this.store.init();
       await this.loadLastMoveAction();
@@ -538,6 +542,10 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
+  openBackupSetupTab() {
+    void chrome.tabs.create({ url: `${location.origin}${location.pathname}?${BACKUP_SETUP_QUERY}` });
+  }
+
   async runBackupNow() {
     try {
       const chosen = await getChosenBackupHandle();
@@ -641,7 +649,9 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     if (status.chosenAllowed) {
       return `Saving in the Chrome profile and ${status.chosenFolderName}.`;
     }
-    return `Saving in the Chrome profile. To also save to ${status.chosenFolderName}, click Backup now and allow access. Choose "every visit" if Chrome offers it.`;
+    return this.openedForBackupSetup
+      ? `Saving in the Chrome profile. To also save to ${status.chosenFolderName}, click Backup now and choose "Allow on every visit".`
+      : `Saving in the Chrome profile. To also save to ${status.chosenFolderName}, click Open in a tab, as Chrome only offers lasting access there.`;
   }
 
   backupLastText() {

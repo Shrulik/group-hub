@@ -247,6 +247,9 @@
       <div class="backup-panel__actions">
         <button type="button" class="utility-menu__btn" (click)="chooseBackupFolder()">Choose folder</button>
         <button type="button" class="utility-menu__btn" (click)="runBackupNow()">Backup now</button>
+        @if (backupStatus()?.chosenFolderName && !backupStatus()?.chosenAllowed && !openedForBackupSetup) {
+          <button type="button" class="utility-menu__btn" (click)="openBackupSetupTab()">Open in a tab</button>
+        }
       </div>
     </section>
   }
