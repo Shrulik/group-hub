@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { Injectable, signal } from '@angular/core';
-import { GROUPS_SNAPSHOT_KEY, LAST_MOVE_ACTION_KEY } from '@group-hub/shared/constants';
+import { LAST_MOVE_ACTION_KEY } from '@group-hub/shared/constants';
 
 @Injectable({ providedIn: 'root' })
 export class GroupHubStore {
@@ -9,7 +9,7 @@ export class GroupHubStore {
   lastError = signal(null);
 
   initialized = false;
-  storageListener;
+  messageListener;
 
   async init() {
     if (this.initialized) {
@@ -17,18 +17,17 @@ export class GroupHubStore {
     }
     this.initialized = true;
 
-    if (typeof chrome === 'undefined' || !chrome.storage?.local) {
+    if (typeof chrome === 'undefined' || !chrome.runtime?.onMessage) {
       throw new Error('Chrome extension APIs are unavailable.');
     }
 
-    await this.loadSnapshotFromStorage();
-    this.attachStorageListener();
+    this.attachMessageListener();
     await this.refresh();
   }
 
   async refresh() {
     try {
-      this.loading.set(true);
+      this.loading.set(!this.snapshot());
       this.lastError.set(null);
       const response = await this.sendMessage({
         channel: 'tgm',
@@ -141,34 +140,13 @@ export class GroupHubStore {
     return Date.now() - action.timestamp < EXPIRE_MS;
   }
 
-  async loadSnapshotFromStorage() {
-    try {
-      const stored = await chrome.storage.local.get(GROUPS_SNAPSHOT_KEY);
-      const snapshot = stored[GROUPS_SNAPSHOT_KEY];
-      if (snapshot) {
-        this.snapshot.set(snapshot);
-      }
-    } catch (error) {
-      console.error('[GroupHub] failed to load snapshot from storage', error);
-    }
-  }
-
-  attachStorageListener() {
-    if (this.storageListener) {
-      chrome.storage.onChanged.removeListener(this.storageListener);
-    }
-
-    this.storageListener = (changes, areaName) => {
-      if (areaName !== 'local') {
-        return;
-      }
-      const entry = changes[GROUPS_SNAPSHOT_KEY];
-      if (entry && entry.newValue) {
-        this.snapshot.set(entry.newValue);
+  attachMessageListener() {
+    this.messageListener = (message) => {
+      if (message?.channel === 'tgm' && message.type === 'snapshotChanged') {
+        this.snapshot.set(message.snapshot);
       }
     };
-
-    chrome.storage.onChanged.addListener(this.storageListener);
+    chrome.runtime.onMessage.addListener(this.messageListener);
   }
 
   async sendMessage(message) {

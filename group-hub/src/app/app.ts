@@ -118,6 +118,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     timeStyle: 'short'
   });
   focusHandler = () => {
+    void this.store.refresh();
     void this.loadSelectedTabs();
   };
 
@@ -126,7 +127,6 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
       await this.store.init();
       await this.loadLastMoveAction();
       await this.loadBackupStatus();
-      void this.ensureBackupDue();
     } catch (error) {
       console.error('[GroupHub] initialization failed', error);
       this.flashStatus('Chrome extension APIs unavailable.', 'error');
@@ -256,7 +256,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
     this.storagePanel.set(null);
-    if (!(await this.savePreRunBackup())) {
+    if (!(await this.savePreRunBackup(panel.preview.incompleteRun))) {
       return;
     }
     try {
@@ -278,7 +278,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  async savePreRunBackup() {
+  async savePreRunBackup(keepExisting) {
     try {
       const handle = await getBackupDirectoryHandle();
       if (!handle) {
@@ -288,6 +288,9 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
       if (!(await this.ensureBackupPermission(handle))) {
         this.flashStatus('Backup folder permission was not granted, so nothing was moved.', 'error');
         return false;
+      }
+      if (keepExisting && (await getBackupStatusForHandle(handle)).preRunBackup) {
+        return true;
       }
       await writePreRunBackup(handle, await this.store.exportData());
       await this.loadBackupStatus();
@@ -316,7 +319,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
       window.close();
     } catch (error) {
       console.error('[GroupHub] pop out failed', error);
-      this.flashStatus('Unable to bring that group back.', 'error');
+      this.flashStatus(this.errorMessage(error, 'Unable to bring that group back.'), 'error');
     }
   }
 
@@ -505,16 +508,6 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  async ensureBackupDue() {
-    try {
-      const status = await this.writeBackupFromPage({ force: false });
-      this.backupStatus.set(status);
-    } catch (error) {
-      console.error('[GroupHub] automatic backup failed', error);
-      await this.loadBackupStatus();
-    }
-  }
-
   toggleBackupPanel() {
     this.backupPanelVisible.update((open) => !open);
   }
@@ -583,7 +576,6 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
       lastBackupAt: latestBackup?.generatedAt ?? null,
       lastBackupDate: latestBackup?.backupDate ?? null,
       lastBackupFile: latestBackup?.fileName ?? null,
-      backupDue: false,
       lastError: null
     });
     return result.status;

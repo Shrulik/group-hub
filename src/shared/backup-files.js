@@ -1,4 +1,4 @@
-import { BACKUP_FILE_NAMES, PRE_RUN_BACKUP_FILE_NAME } from './constants.js';
+import { BACKUP_FILE_NAMES, LATEST_BACKUP_FILE_NAMES, PRE_RUN_BACKUP_FILE_NAME } from './constants.js';
 import { chooseBackupFileName, localDateKey, normalizeBackupPayload } from './backup-format.js';
 
 export function backupFolderName(handle) {
@@ -29,9 +29,9 @@ export async function readBackupFile(directoryHandle, fileName) {
   }
 }
 
-export async function readValidBackups(handle) {
+export async function readValidBackups(handle, fileNames = BACKUP_FILE_NAMES) {
   const backups = [];
-  for (const fileName of BACKUP_FILE_NAMES) {
+  for (const fileName of fileNames) {
     try {
       const payload = await readBackupFile(handle, fileName);
       if (!payload) {
@@ -71,7 +71,8 @@ export async function getBackupStatusForHandle(handle, settings = {}) {
   }
 
   const permission = await queryBackupPermission(handle);
-  const validBackups = permission === 'granted' ? await readValidBackups(handle) : [];
+  const validBackups =
+    permission === 'granted' ? await readValidBackups(handle, [...BACKUP_FILE_NAMES, ...LATEST_BACKUP_FILE_NAMES]) : [];
   const latestBackup = validBackups[0] ?? null;
 
   return {
@@ -113,6 +114,28 @@ export async function writeRotatingBackup(handle, payload, { force = false } = {
     wrote: true,
     fileName: targetFileName
   };
+}
+
+async function olderLatestFileName(handle) {
+  const modified = await Promise.all(
+    LATEST_BACKUP_FILE_NAMES.map(async (fileName) => {
+      try {
+        const fileHandle = await handle.getFileHandle(fileName);
+        return { fileName, at: (await fileHandle.getFile()).lastModified };
+      } catch (error) {
+        if (error?.name === 'NotFoundError') {
+          return { fileName, at: 0 };
+        }
+        throw error;
+      }
+    })
+  );
+  return modified.sort((a, b) => a.at - b.at)[0].fileName;
+}
+
+export async function writeLatestBackup(handle, payload) {
+  normalizeBackupPayload(payload);
+  await writeBackupFile(handle, await olderLatestFileName(handle), payload);
 }
 
 export async function writePreRunBackup(handle, payload) {

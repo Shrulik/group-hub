@@ -1,4 +1,6 @@
 import {
+  SESSION_READY_ALARM_NAME,
+  SESSION_READY_DELAY_MINUTES,
   STORAGE_ACTIVITY_KEY,
   STORAGE_SESSION_KEY,
   STORAGE_STATE_KEY
@@ -20,7 +22,6 @@ const MOVE_ATTEMPTS = 4;
 const MOVE_RETRY_MS = 500;
 const MINIMIZE_ATTEMPTS = 3;
 const MINIMIZE_RETRY_MS = 300;
-const STARTUP_GRACE_MS = 120000;
 const ACTIVITY_PERSIST_MS = 2000;
 const BLANK_URL = 'about:blank';
 
@@ -32,18 +33,33 @@ export function createStorageWindows({ refreshSnapshot }) {
   let activity = {};
   let dirtyActivity = new Set();
   let activityTimer;
-  let startupGraceUntil = 0;
+  let sessionReady = false;
 
   const markerPrefix = () => STORAGE_MARKER_PREFIX;
 
   async function load() {
-    const stored = await chrome.storage.local.get({
-      [STORAGE_STATE_KEY]: { stored: {}, contexts: {} },
-      [STORAGE_ACTIVITY_KEY]: {}
-    });
-    state = stored[STORAGE_STATE_KEY];
-    activity = stored[STORAGE_ACTIVITY_KEY];
+    const stored = await chrome.storage.local.get([STORAGE_STATE_KEY, STORAGE_ACTIVITY_KEY]);
+    state = {
+      ...stored[STORAGE_STATE_KEY],
+      stored: stored[STORAGE_STATE_KEY]?.stored ?? {},
+      contexts: stored[STORAGE_STATE_KEY]?.contexts ?? {}
+    };
+    activity = stored[STORAGE_ACTIVITY_KEY] ?? {};
+    const session = await chrome.storage.session.get({ [STORAGE_SESSION_KEY]: false });
+    sessionReady = session[STORAGE_SESSION_KEY];
+    if (!sessionReady && !(await chrome.alarms.get(SESSION_READY_ALARM_NAME))) {
+      await chrome.alarms.create(SESSION_READY_ALARM_NAME, { delayInMinutes: SESSION_READY_DELAY_MINUTES });
+    }
+  }
+
+  async function finishSessionStart() {
+    if (sessionReady) {
+      return;
+    }
     await reconcileGroupIds();
+    sessionReady = true;
+    await chrome.storage.session.set({ [STORAGE_SESSION_KEY]: true });
+    await chrome.alarms.clear(SESSION_READY_ALARM_NAME);
   }
 
   const saveState = () => chrome.storage.local.set({ [STORAGE_STATE_KEY]: state });
@@ -53,7 +69,7 @@ export function createStorageWindows({ refreshSnapshot }) {
     return Promise.all(
       groups.map(async (group) => ({
         id: group.id,
-        fingerprint: fingerprintGroup(group, await chrome.tabs.query({ groupId: group.id }))
+        fingerprint: fingerprintGroup(await chrome.tabs.query({ groupId: group.id }))
       }))
     );
   }
@@ -75,12 +91,15 @@ export function createStorageWindows({ refreshSnapshot }) {
       return;
     }
     const candidates = await currentFingerprints();
+    if (!candidates.length) {
+      return;
+    }
     const byId = new Map(candidates.map((candidate) => [candidate.id, candidate.fingerprint]));
     const buildResolver = () => {
       const taken = new Set();
       return (id, fingerprint) => {
         if (!fingerprint) {
-          return byId.has(id) ? id : null;
+          return null;
         }
         const current = byId.get(id);
         const resolved = current && fingerprintsMatch(fingerprint, current)
@@ -108,6 +127,7 @@ export function createStorageWindows({ refreshSnapshot }) {
   }
 
   async function readWindowsAndPlan(mode, windowId) {
+    await finishSessionStart();
     const windows = await chrome.windows.getAll({ populate: true });
     const groups = await chrome.tabGroups.query({});
     const recorded = Object.fromEntries(Object.entries(activity).map(([id, record]) => [id, record.at]));
@@ -143,6 +163,8 @@ export function createStorageWindows({ refreshSnapshot }) {
       recentlySeenTabCount: plan.recentlySeenTabCount,
       untouchedWindowCount: plan.untouchedWindowCount,
       groupedTabCount: plan.groupedTabCount,
+      ungroupedTabCount: plan.ungroupedTabCount,
+      incompleteRun: Boolean(state.incompleteRun),
       restartBurstTabCount: plan.restartBurstTabCount,
       skippedCurrentGroupCount: plan.skippedCurrentGroups.length,
       audibleTabs: await describeAudibleTabs(plan)
@@ -276,10 +298,7 @@ export function createStorageWindows({ refreshSnapshot }) {
       await chrome.tabGroups.update(groupId, { title: move.title, color: move.color });
     }
     const tabsBefore = await chrome.tabs.query({ groupId });
-    const fingerprint = fingerprintGroup(
-      { title: move.title, color: move.color },
-      tabsBefore
-    );
+    const fingerprint = fingerprintGroup(tabsBefore);
     await withRetry(() => chrome.tabGroups.move(groupId, { windowId: targetWindowId, index: -1 }));
     const tabsAfter = await chrome.tabs.query({ groupId, windowId: targetWindowId });
     if (tabsAfter.length !== tabsBefore.length) {
@@ -290,13 +309,12 @@ export function createStorageWindows({ refreshSnapshot }) {
     if (contextId && move.kind === 'loose') {
       state.contexts[contextId].members.push({ groupId, fingerprint });
     }
+    await saveState();
     return { groupId, fingerprint };
   }
 
   async function run(mode = STORAGE_MODE_STALE, windowId) {
-    if (running) {
-      throw new Error('A storage run is already in progress');
-    }
+    assertNotRunning();
     running = true;
     try {
       const { plan, windows } = await readWindowsAndPlan(mode, windowId);
@@ -304,7 +322,9 @@ export function createStorageWindows({ refreshSnapshot }) {
         return { blocked: 'audible', audibleTabs: await describeAudibleTabs(plan) };
       }
 
+      state.incompleteRun = true;
       const contextIds = await ensureContexts(plan);
+      await saveState();
       const placeholders = await clearActiveTabs(plan, windows);
       const slotWindows = await resolveSlotWindows(plan, windows);
       let movedGroups = 0;
@@ -331,6 +351,7 @@ export function createStorageWindows({ refreshSnapshot }) {
       }
       await sleep(MINIMIZE_RETRY_MS);
       await discardStorageMarkers();
+      state.incompleteRun = failed > 0;
       await saveState();
 
       return { movedGroups, tabCount: plan.tabCount, failed };
@@ -363,13 +384,19 @@ export function createStorageWindows({ refreshSnapshot }) {
     }
   }
 
+  function assertNotRunning() {
+    if (running) {
+      throw new Error('Group Hub is still working. Try again when it finishes.');
+    }
+  }
+
   async function runQuietly(action) {
-    const wasRunning = running;
+    assertNotRunning();
     running = true;
     try {
       return await action();
     } finally {
-      running = wasRunning;
+      running = false;
     }
   }
 
@@ -391,14 +418,6 @@ export function createStorageWindows({ refreshSnapshot }) {
     }
   }
 
-  async function handleSessionStart() {
-    const stored = await chrome.storage.session.get({ [STORAGE_SESSION_KEY]: false });
-    if (!stored[STORAGE_SESSION_KEY]) {
-      await chrome.storage.session.set({ [STORAGE_SESSION_KEY]: true });
-      startupGraceUntil = Date.now() + STARTUP_GRACE_MS;
-    }
-  }
-
   async function storedGroupIdsInStorage() {
     const storageIds = new Set((await storageWindowsWithTabs()).map((window) => window.id));
     return async (groupId) => {
@@ -412,6 +431,7 @@ export function createStorageWindows({ refreshSnapshot }) {
   }
 
   async function groupInfo(groupId) {
+    await finishSessionStart();
     const isStored = await storedGroupIdsInStorage();
     if (!(await isStored(groupId))) {
       return { inStorage: false, contextMembers: [] };
@@ -438,12 +458,13 @@ export function createStorageWindows({ refreshSnapshot }) {
   }
 
   async function popOut(groupId, scope) {
-    const info = await groupInfo(groupId);
-    if (!info.inStorage) {
-      throw new Error('That group is not in a storage window');
-    }
+    assertNotRunning();
     running = true;
     try {
+      const info = await groupInfo(groupId);
+      if (!info.inStorage) {
+        throw new Error('That group is not in a storage window');
+      }
       const members = scope === 'context' ? info.contextMembers : [];
       const stayed = members.find((member) => !member.inStorage);
       let targetWindowId;
@@ -461,6 +482,7 @@ export function createStorageWindows({ refreshSnapshot }) {
       for (const id of toMove) {
         await withRetry(() => chrome.tabGroups.move(id, { windowId: targetWindowId, index: -1 }));
         delete state.stored[id];
+        recordActivity(id);
       }
 
       await chrome.tabGroups.update(groupId, { collapsed: false });
@@ -479,9 +501,12 @@ export function createStorageWindows({ refreshSnapshot }) {
   }
 
   function touchGroup(groupId) {
-    if (running || Date.now() < startupGraceUntil || typeof groupId !== 'number' || groupId < 0) {
-      return;
+    if (!running && sessionReady && typeof groupId === 'number' && groupId >= 0) {
+      recordActivity(groupId);
     }
+  }
+
+  function recordActivity(groupId) {
     activity[groupId] = { ...activity[groupId], at: Date.now() };
     dirtyActivity.add(groupId);
     if (activityTimer === undefined) {
@@ -495,8 +520,8 @@ export function createStorageWindows({ refreshSnapshot }) {
     dirtyActivity = new Set();
     for (const id of ids) {
       try {
-        const [group, tabs] = await Promise.all([chrome.tabGroups.get(id), chrome.tabs.query({ groupId: id })]);
-        activity[id].fingerprint = fingerprintGroup(group, tabs);
+        await chrome.tabGroups.get(id);
+        activity[id].fingerprint = fingerprintGroup(await chrome.tabs.query({ groupId: id }));
       } catch (error) {
         delete activity[id];
       }
@@ -515,10 +540,11 @@ export function createStorageWindows({ refreshSnapshot }) {
     unloadIfStored,
     runQuietly,
     reconcileGroupIds,
-    handleSessionStart,
+    finishSessionStart,
     groupInfo,
     popOut,
     touchGroup,
-    isRunning: () => running
+    isRunning: () => running,
+    isSessionReady: () => sessionReady
   };
 }

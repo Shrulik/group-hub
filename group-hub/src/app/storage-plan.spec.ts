@@ -203,8 +203,16 @@ describe('storage plan', () => {
       { id: 2, tabs: tabsInGroup(11, 2) }
     ];
     const result = plan(windows, [group(10), group(11)], { mode: STORAGE_MODE_WINDOW, targetWindowId: 1 });
-    expect(result.moves.map((move) => move.kind)).toEqual(['group', 'loose']);
-    expect(result.closingWindowIds).toEqual([1]);
+    expect(result.moves.map((move) => move.kind)).toEqual(['group']);
+    expect(result.ungroupedTabCount).toBe(1);
+    expect(result.closingWindowIds).toEqual([]);
+  });
+
+  it('sends nothing from a window of only ungrouped tabs in window mode', () => {
+    const windows = [{ id: 1, focused: true, tabs: [tab(), tab(), tab({ pinned: true })] }];
+    const result = plan(windows, [], { mode: STORAGE_MODE_WINDOW, targetWindowId: 1 });
+    expect(result.moves).toEqual([]);
+    expect(result.ungroupedTabCount).toBe(2);
   });
 
   it('does not act on a storage window in window mode', () => {
@@ -212,11 +220,11 @@ describe('storage plan', () => {
     expect(plan([storage], [group(20)], { mode: STORAGE_MODE_WINDOW, targetWindowId: 9 }).moves).toEqual([]);
   });
 
-  it('matches same-named groups by their tabs after a restart', () => {
-    const before = fingerprintGroup({ title: 'Same', color: 'blue' }, [{ url: 'a' }, { url: 'b' }]);
+  it('matches groups by their tabs after a restart, whatever their names', () => {
+    const before = fingerprintGroup([{ url: 'a' }, { url: 'b' }]);
     const candidates = [
-      { id: 1, fingerprint: fingerprintGroup({ title: 'Same', color: 'blue' }, [{ url: 'x' }, { url: 'y' }]) },
-      { id: 2, fingerprint: fingerprintGroup({ title: 'Same', color: 'blue' }, [{ url: 'a' }, { url: 'b' }]) }
+      { id: 1, fingerprint: fingerprintGroup([{ url: 'x' }, { url: 'y' }]) },
+      { id: 2, fingerprint: fingerprintGroup([{ url: 'a' }, { url: 'b' }]) }
     ];
     expect(findMatchingGroupId(before, candidates)).toBe(2);
     expect(findMatchingGroupId(before, candidates, new Set([2]))).toBeNull();

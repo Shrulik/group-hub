@@ -3,27 +3,33 @@ import {
   BACKUP_ALARM_PERIOD_MINUTES,
   BACKUP_SETTINGS_KEY,
   GROUP_METADATA_KEY,
-  GROUPS_SNAPSHOT_KEY,
+  LEGACY_BACKUP_ALARM_NAME,
+  LEGACY_GROUPS_SNAPSHOT_KEY,
   RESTORE_MODE_APPEND,
   RESTORE_MODE_REPLACE,
+  SESSION_READY_ALARM_NAME,
   SNAPSHOT_SCHEMA_VERSION,
   normalizeGroupColor
 } from '../shared/constants.js';
 import {
   buildExportPayload,
   isValidRestoreMode,
+  localDateKey,
   normalizeBackupPayload
 } from '../shared/backup-format.js';
+import {
+  backupFolderName,
+  queryBackupPermission,
+  writeLatestBackup,
+  writeRotatingBackup
+} from '../shared/backup-files.js';
+import { getBackupDirectoryHandle } from '../shared/backup-storage.js';
 import { createStorageWindows } from './storage-windows.js';
 
 const TAB_GROUP_ID_NONE = -1;
 
-const REFRESH_DEBOUNCE_MS = 150;
-
 let metadata = {};
 let metadataDirty = false;
-let currentSnapshot = null;
-let refreshTimer;
 let listenersRegistered = false;
 let resolveReady;
 const ready = new Promise((resolve) => {
@@ -31,10 +37,7 @@ const ready = new Promise((resolve) => {
 });
 
 async function loadInitialState() {
-  const stored = await chrome.storage.local.get({
-    [GROUP_METADATA_KEY]: {},
-    [GROUPS_SNAPSHOT_KEY]: null
-  });
+  const stored = await chrome.storage.local.get({ [GROUP_METADATA_KEY]: {} });
 
   const rawMetadata = stored[GROUP_METADATA_KEY];
   if (rawMetadata && typeof rawMetadata === 'object') {
@@ -49,10 +52,7 @@ async function loadInitialState() {
     metadata = {};
   }
 
-  const snapshot = stored[GROUPS_SNAPSHOT_KEY];
-  if (snapshot) {
-    currentSnapshot = snapshot;
-  }
+  await chrome.storage.local.remove(LEGACY_GROUPS_SNAPSHOT_KEY);
 }
 
 function ensureGroupMetadata(groupId, createdAt) {
@@ -96,15 +96,15 @@ function mapTab(tab) {
 }
 
 async function buildSnapshot() {
-  const groups = await chrome.tabGroups.query({});
+  const [groups, allTabs] = await Promise.all([chrome.tabGroups.query({}), chrome.tabs.query({})]);
+  const tabsByGroup = Map.groupBy(allTabs, (tab) => tab.groupId);
   const seen = new Set();
   const groupEntries = [];
 
   for (const group of groups) {
     seen.add(group.id);
     const createdAt = ensureGroupMetadata(group.id);
-    const tabs = await chrome.tabs.query({ groupId: group.id });
-    const managedTabs = tabs
+    const managedTabs = (tabsByGroup.get(group.id) ?? [])
       .map(mapTab)
       .filter(Boolean)
       .sort((a, b) => a.index - b.index);
@@ -130,24 +130,18 @@ async function buildSnapshot() {
   };
 }
 
-async function persistState(snapshot) {
-  const payload = {
-    [GROUPS_SNAPSHOT_KEY]: snapshot
-  };
+async function persistMetadata() {
   if (metadataDirty) {
-    payload[GROUP_METADATA_KEY] = metadata;
     metadataDirty = false;
+    await chrome.storage.local.set({ [GROUP_METADATA_KEY]: metadata });
   }
-  await chrome.storage.local.set(payload);
 }
 
-async function refreshSnapshot(reason) {
+async function readSnapshot(reason) {
   await ready;
   try {
     const snapshot = await buildSnapshot();
-    currentSnapshot = snapshot;
-    await persistState(snapshot);
-    console.debug('[GroupHub] snapshot refreshed', reason, snapshot);
+    await persistMetadata();
     return snapshot;
   } catch (error) {
     console.error('[GroupHub] failed to refresh snapshot', reason, error);
@@ -155,27 +149,16 @@ async function refreshSnapshot(reason) {
   }
 }
 
-function scheduleRefresh(reason) {
-  if (storageWindows.isRunning()) {
-    return;
-  }
-  if (refreshTimer !== undefined) {
-    clearTimeout(refreshTimer);
-  }
-  refreshTimer = setTimeout(() => {
-    refreshTimer = undefined;
-    void refreshSnapshot(reason);
-  }, REFRESH_DEBOUNCE_MS);
+async function refreshSnapshot(reason) {
+  const snapshot = await readSnapshot(reason);
+  chrome.runtime.sendMessage({ channel: 'tgm', type: 'snapshotChanged', snapshot }).catch(() => {});
+  return snapshot;
 }
 
 const storageWindows = createStorageWindows({ refreshSnapshot });
 
-function groupOfTabInSnapshot(tabId) {
-  return currentSnapshot?.groups.find((group) => group.tabs.some((tab) => tab.id === tabId))?.id;
-}
-
 async function handleExport() {
-  const snapshot = await refreshSnapshot('export request');
+  const snapshot = await readSnapshot('export request');
   const windows = await chrome.windows.getAll({ populate: true });
   return buildExportPayload(snapshot, windows);
 }
@@ -195,11 +178,12 @@ async function handleImport(payload, mode = RESTORE_MODE_APPEND) {
   const result = await storageWindows.runQuietly(async () => {
     const created = await createGroupsFromBackup(normalized);
     if (mode === RESTORE_MODE_REPLACE) {
-      if (created.createdTabs === normalized.tabCount && replaceTabIds.length > 0) {
+      if (created.createdTabs !== normalized.tabCount) {
+        created.partial = true;
+      }
+      if (!created.partial && replaceTabIds.length > 0) {
         await chrome.tabs.remove(replaceTabIds);
         created.removedTabs = replaceTabIds.length;
-      } else if (created.createdTabs !== normalized.tabCount) {
-        created.partial = true;
       }
     }
     return created;
@@ -374,29 +358,45 @@ async function saveBackupSettings(settings) {
   });
 }
 
-async function markBackupDue(reason) {
-  await saveBackupSettings({
-    backupDue: true,
-    backupDueAt: Date.now(),
-    backupDueReason: reason
-  });
-}
-
-async function markBackupDueSafely(reason) {
+async function captureBackups() {
+  if (storageWindows.isRunning() || !storageWindows.isSessionReady()) {
+    return;
+  }
   try {
-    await markBackupDue(reason);
+    const handle = await getBackupDirectoryHandle();
+    if (!handle || (await queryBackupPermission(handle)) !== 'granted') {
+      return;
+    }
+    const payload = await handleExport();
+    if (!normalizeBackupPayload(payload).tabCount) {
+      return;
+    }
+    await writeLatestBackup(handle, payload);
+    const { [BACKUP_SETTINGS_KEY]: settings } = await chrome.storage.local.get({ [BACKUP_SETTINGS_KEY]: {} });
+    const today = localDateKey();
+    if (settings.lastBackupDate !== today) {
+      await writeRotatingBackup(handle, payload);
+    }
+    await saveBackupSettings({
+      folderName: backupFolderName(handle),
+      lastBackupAt: payload.generatedAt,
+      lastBackupDate: today,
+      lastError: null
+    });
   } catch (error) {
-    console.error('[GroupHub] failed to mark backup due', error);
+    console.error('[GroupHub] periodic backup failed', error);
+    await saveBackupSettings({ lastError: String(error) });
   }
 }
 
 async function ensureBackupAlarm() {
-  if (!chrome.alarms?.create) {
-    return;
+  await chrome.alarms.clear(LEGACY_BACKUP_ALARM_NAME);
+  if (!(await chrome.alarms.get(BACKUP_ALARM_NAME))) {
+    await chrome.alarms.create(BACKUP_ALARM_NAME, {
+      delayInMinutes: BACKUP_ALARM_PERIOD_MINUTES,
+      periodInMinutes: BACKUP_ALARM_PERIOD_MINUTES
+    });
   }
-  await chrome.alarms.create(BACKUP_ALARM_NAME, {
-    periodInMinutes: BACKUP_ALARM_PERIOD_MINUTES
-  });
 }
 
 async function activateGroup(groupId) {
@@ -544,56 +544,36 @@ function registerListeners() {
   }
   listenersRegistered = true;
 
-  chrome.alarms?.onAlarm.addListener((alarm) => {
-    if (alarm.name === BACKUP_ALARM_NAME) {
-      void markBackupDueSafely('alarm');
-    }
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    void ready.then(async () => {
+      if (alarm.name === SESSION_READY_ALARM_NAME) {
+        await storageWindows.finishSessionStart();
+      }
+      await captureBackups();
+    });
   });
 
   chrome.tabGroups.onCreated.addListener((group) => {
-    void ready.then(() => ensureGroupMetadata(group.id));
-    scheduleRefresh('group created');
+    void ready.then(() => {
+      ensureGroupMetadata(group.id);
+      return persistMetadata();
+    });
   });
 
-  chrome.tabGroups.onUpdated.addListener((group) => {
-    void ready.then(() => {
-      const known = currentSnapshot?.groups.find((entry) => entry.id === group.id);
-      if (known && (known.title !== (group.title ?? '') || known.color !== group.color)) {
-        storageWindows.touchGroup(group.id);
-      }
-    });
-    scheduleRefresh('group updated');
-  });
-  chrome.tabGroups.onMoved.addListener(() => scheduleRefresh('group moved'));
   chrome.tabGroups.onRemoved.addListener((group) => {
     void ready.then(() => {
       if (group && typeof group.id === 'number' && metadata[group.id]) {
         delete metadata[group.id];
         metadataDirty = true;
       }
+      return persistMetadata();
     });
-    scheduleRefresh('group removed');
   });
 
-  chrome.tabs.onCreated.addListener(() => scheduleRefresh('tab created'));
-  chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
-    void ready.then(() => {
-      if (!removeInfo.isWindowClosing) {
-        storageWindows.touchGroup(groupOfTabInSnapshot(tabId));
-      }
-    });
-    scheduleRefresh('tab removed');
-  });
   chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
-    void ready.then(() => {
-      if (changeInfo.url || changeInfo.groupId !== undefined) {
-        storageWindows.touchGroup(tab.groupId);
-      }
-      if (changeInfo.status === 'complete') {
-        void storageWindows.unloadIfStored(tab);
-      }
-    });
-    scheduleRefresh('tab updated');
+    if (changeInfo.status === 'complete') {
+      void ready.then(() => storageWindows.unloadIfStored(tab));
+    }
   });
   chrome.tabs.onActivated.addListener(({ tabId }) => {
     void ready.then(async () => {
@@ -605,9 +585,6 @@ function registerListeners() {
       }
     });
   });
-  chrome.tabs.onMoved.addListener(() => scheduleRefresh('tab moved'));
-  chrome.tabs.onAttached.addListener(() => scheduleRefresh('tab attached'));
-  chrome.tabs.onDetached.addListener(() => scheduleRefresh('tab detached'));
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || message.channel !== 'tgm') {
@@ -618,13 +595,8 @@ function registerListeners() {
       try {
         await ready;
         switch (message.type) {
-          case 'getSnapshot': {
-            const snapshot = currentSnapshot ?? (await refreshSnapshot('message getSnapshot'));
-            sendResponse({ snapshot });
-            break;
-          }
           case 'refresh': {
-            const snapshot = await refreshSnapshot('message refresh');
+            const snapshot = await readSnapshot('message refresh');
             sendResponse({ snapshot });
             break;
           }
@@ -689,13 +661,16 @@ function registerListeners() {
 }
 
 async function bootstrap() {
-  registerListeners();
-  await loadInitialState();
-  await storageWindows.load();
-  resolveReady();
-  await ensureBackupAlarm();
-  await storageWindows.handleSessionStart();
-  await refreshSnapshot('initial bootstrap');
+  try {
+    registerListeners();
+    await loadInitialState();
+    await storageWindows.load();
+    await ensureBackupAlarm();
+  } catch (error) {
+    console.error('[GroupHub] startup failed', error);
+  } finally {
+    resolveReady();
+  }
 }
 
 void bootstrap();

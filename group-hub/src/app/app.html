@@ -255,7 +255,7 @@
     <section class="restore-panel">
       <div class="restore-panel__copy">
         @if (source === 'pre-run') {
-          Restore from before the last storage run. Replace closes your current windows and tabs. Restored tabs lose their back/forward history.
+          Restore from before the last storage run. Replace closes your current windows and tabs. Restored tabs lose their back/forward history. Don't change tabs or groups until it finishes.
         } @else if (source === 'backup') {
           Restore from backup
         } @else {
@@ -292,7 +292,15 @@
           <button type="button" class="utility-menu__btn" (click)="closeStoragePanel()">Cancel</button>
         </div>
       } @else if (panel.preview.tabCount === 0) {
-        <p class="storage-panel__copy">Nothing to send. {{ count(panel.preview.recentGroupCount, 'group') }} stay because of recent activity.</p>
+        <p class="storage-panel__copy">
+          @if (panel.mode === storageModes.stale) {
+            Nothing to send. {{ count(panel.preview.recentGroupCount, 'group') }} stay because of recent activity.
+          } @else if (panel.preview.ungroupedTabCount) {
+            This window has no groups to send. Group its {{ count(panel.preview.ungroupedTabCount, 'ungrouped tab') }} first.
+          } @else {
+            This window has no groups to send.
+          }
+        </p>
         <div class="restore-panel__actions">
           <button type="button" class="utility-menu__btn" (click)="closeStoragePanel()">Close</button>
         </div>
@@ -302,9 +310,15 @@
             Moves groups with at most one tab used in the last three weeks into minimized storage windows and unloads their tabs to free memory.
           } @else {
             Moves every group in this window into minimized storage windows and unloads their tabs to free memory.
+            @if (panel.preview.ungroupedTabCount) {
+              {{ count(panel.preview.ungroupedTabCount, 'ungrouped tab') }} will stay in this window. Cancel if you want to group them first.
+            }
           }
-          Unsaved text in a loaded tab may be lost. A backup is saved first. Use a group's arrow to bring it back.
+          Unsaved text in a loaded tab may be lost. A backup is saved first. Use a group's arrow to bring it back. Don't change tabs or groups until it finishes.
         </p>
+        @if (panel.preview.incompleteRun) {
+          <p class="storage-panel__copy">The last run didn't finish, so the backup from before it is kept.</p>
+        }
         <ul class="storage-panel__list">
           <li>{{ count(panel.preview.groupCount, 'group') }} with {{ count(panel.preview.groupedTabCount, 'tab') }} move</li>
           @if (panel.preview.looseTabCount) {
@@ -348,7 +362,9 @@
           </details>
         }
         <div class="restore-panel__actions">
-          <button type="button" class="utility-menu__btn" (click)="confirmStorageRun()">Send to storage</button>
+          <button type="button" class="utility-menu__btn" (click)="confirmStorageRun()">
+            {{ panel.preview.ungroupedTabCount ? 'Send only the groups' : 'Send to storage' }}
+          </button>
           <button type="button" class="utility-menu__btn" (click)="closeStoragePanel()">Cancel</button>
         </div>
       }

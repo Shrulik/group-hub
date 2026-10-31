@@ -37,17 +37,17 @@ Responsibilities:
 - Reflects snapshot state into `chrome.storage.local` (`GROUPS_SNAPSHOT_KEY`, `GROUP_METADATA_KEY`) so the popup can read it instantly.
 - Responds to `chrome.runtime` messages on the `tgm` channel:
   - `refresh`: rebuilds the snapshot on demand.
-  - `getSnapshot`: returns cached snapshot without forcing refresh.
   - `export`: returns a simplified payload for file export.
   - `import`: recreates tab groups from an imported payload.
   - `openGroup`: activates and focuses a tab group.
-- Watches Chrome events (`tabGroups.*`, `tabs.*`) and debounces `refreshSnapshot` calls so state stays current with minimal churn.
+- Reads groups live when the popup asks (`refresh`) and sends `snapshotChanged` to an open popup after its own actions. Nothing is rebuilt on ordinary tab changes.
+- Every 10 minutes an alarm writes the newer of two `group-hub-latest-*.json` backups by replacing the older, and the first capture of each day also writes a daily backup. Captures skip running storage work and the first 2 minutes of a session.
 - Persists metadata (creation timestamps keyed by group id) between sessions.
 
 Key data flow:
 
-1. On startup (`bootstrap`), load stored metadata + snapshot, register listeners, then perform an initial refresh.
-2. Event listeners call `scheduleRefresh(reason)` which debounces `refreshSnapshot`. The snapshot is rebuilt via `chrome.tabGroups.query` and `chrome.tabs.query` into a normalized structure stored in memory + storage.
+1. On startup (`bootstrap`), register listeners, then load stored metadata and storage records. `ready` always resolves, even if loading fails.
+2. `tabs.onActivated` records group activity, and `tabs.onUpdated` unloads tabs that load in a storage window.
 3. Messaging methods (`handleExport`, `handleImport`, `activateGroup`) encapsulate user actions triggered from the popup.
 
 ## Popup UI (Angular app)
@@ -61,8 +61,8 @@ The Angular app provides the "Quick Manager" interface. It is built with standal
 ### Services
 
 - `GroupHubStore` (`group-hub/src/app/services/group-hub.store.ts`):
-  - Loads the latest snapshot from `chrome.storage.local` on init.
-  - Listens for subsequent storage changes to keep local state in sync.
+  - Asks the worker for a live snapshot on init and when the window regains focus.
+  - Listens for `snapshotChanged` messages after worker actions.
   - Sends messages to the background worker for refresh/export/import/openGroup.
   - Handles transient `sendMessage` failures (worker not yet active) with retry.
   - Exposes signals: `snapshot`, `loading`, `lastError` used by the UI.
@@ -117,7 +117,7 @@ Location: `src/shared`
 
 ## Future considerations
 
-- **Phase 2 tab hygiene**: background worker already enumerates tabs per group, so duplicate detection can run against `currentSnapshot`. Could share additional signals or dedicated messaging types (`findDuplicates`, `closeDuplicates`).
+- **Phase 2 tab hygiene**: background worker already enumerates tabs per group, so duplicate detection can run against a live snapshot. Could share additional signals or dedicated messaging types (`findDuplicates`, `closeDuplicates`).
 - **Full-page manager**: same Angular app can be wrapped into a standalone page by reusing the module and providing a different shell.
 - **Sync / persistence**: snapshot + metadata stored in `chrome.storage.local`; switching to `chrome.storage.sync` would require quota checks but architecture already centralises storage interaction.
 
@@ -130,7 +130,7 @@ Files: `src/shared/storage-plan.js` (pure planning), `src/background/storage-win
 - A storage window is identified by its pinned `data:` marker tab (`STORAGE_MARKER_PREFIX`). Window, tab and group ids do not survive a restart, and extension pages close when the extension reloads.
 - A group stays when `tgm.groupActivity` is under three weeks old or at least two of its tabs (its only tab, for a one-tab group) have a `lastAccessed` under three weeks old, since a single stamp can come from a window being shown again. Tabs stamped within 5 minutes across 10 or more windows are ignored, because a Chrome restart stamps them without any use. Stored groups and contexts live in `tgm.storageState`, keyed by group id and re-matched by fingerprint after a restart.
 - Any tab that finishes loading in a minimized storage window is unloaded again, which covers Chrome's reloads after a restart. Tabs playing audio are left alone.
-- Ungrouped tabs go into one numbered `Loose N` group per source window, continuing from the highest existing number.
-- A run has no undo. Sending again retries anything that failed. Each run first writes `group-hub-before-storage-run.json`, separate from the rotating backups, so later backups cannot replace it.
-- Backups cover every normal window: groups, ungrouped and pinned tabs, window state, bounds and active tab. Restore unloads every tab except the active tab in a visible window, and Replace with such a backup closes all current tabs.
-- Snapshot rebuilds pause during a run.
+- In an old-groups run, ungrouped tabs go into one numbered `Loose N` group per source window, continuing from the highest existing number. The window button moves groups only, and its ungrouped tabs stay.
+- Group ids change on restart, so saved records are matched by tab URLs once per session, 2 minutes after startup or at the first storage action. Activity is not recorded before that.
+- A run has no undo. Sending again retries anything that failed. Each run first writes `group-hub-before-storage-run.json`, separate from the rotating backups, and keeps it while the last run is unfinished, so a retry cannot replace the original layout. Pop-out and restore are refused during a run.
+- Backups cover every normal window: groups, ungrouped and pinned tabs, window state, bounds and active tab. Restore unloads every tab except the active tab in a visible window, and Replace with such a backup closes all current tabs, but only when every tab and group was recreated.

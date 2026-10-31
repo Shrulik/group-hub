@@ -28,12 +28,8 @@ export function hashUrl(url) {
   return (hash >>> 0).toString(36);
 }
 
-export function fingerprintGroup(group, tabs) {
-  return {
-    title: group.title ?? '',
-    color: group.color ?? '',
-    urls: tabs.map((tab) => hashUrl(tab.url || tab.pendingUrl || ''))
-  };
+export function fingerprintGroup(tabs) {
+  return { urls: tabs.map((tab) => hashUrl(tab.url || tab.pendingUrl || '')) };
 }
 
 function overlapRatio(left, right) {
@@ -51,14 +47,14 @@ function overlapRatio(left, right) {
 }
 
 export function fingerprintsMatch(left, right) {
-  return left.title === right.title && overlapRatio(left.urls, right.urls) >= FINGERPRINT_MATCH_RATIO;
+  return overlapRatio(left.urls, right.urls) >= FINGERPRINT_MATCH_RATIO;
 }
 
 export function findMatchingGroupId(fingerprint, candidates, takenIds = new Set()) {
   let bestId = null;
   let bestRatio = 0;
   for (const candidate of candidates) {
-    if (takenIds.has(candidate.id) || candidate.fingerprint.title !== fingerprint.title) {
+    if (takenIds.has(candidate.id)) {
       continue;
     }
     const ratio = overlapRatio(fingerprint.urls, candidate.fingerprint.urls);
@@ -140,6 +136,7 @@ export function planStorageRun({
   const recentGroups = [];
   let recentGroupTabCount = 0;
   let recentlySeenTabCount = 0;
+  let ungroupedTabCount = 0;
   let looseCounter = highestLooseNumber(groups);
 
   for (const window of normalWindows) {
@@ -155,6 +152,12 @@ export function planStorageRun({
         }
         tabsByGroup.get(tab.groupId).push(tab);
       }
+    }
+
+    if (mode === STORAGE_MODE_WINDOW) {
+      ungroupedTabCount = tabs.filter(
+        (tab) => !tab.pinned && (tab.groupId === undefined || tab.groupId === TAB_GROUP_ID_NONE)
+      ).length;
     }
 
     const isContext = tabsByGroup.size >= 2 && tabs.length < CONTEXT_WINDOW_TAB_LIMIT;
@@ -206,12 +209,12 @@ export function planStorageRun({
       });
     }
 
-    if (allGroupsMove) {
+    if (mode === STORAGE_MODE_STALE && allGroupsMove) {
       const looseTabs = tabs.filter(
         (tab) =>
           !tab.pinned &&
           (tab.groupId === undefined || tab.groupId === TAB_GROUP_ID_NONE) &&
-          (mode === STORAGE_MODE_WINDOW || now - lastSeen(tab) >= STALE_AFTER_MS)
+          now - lastSeen(tab) >= STALE_AFTER_MS
       );
       if (looseTabs.length) {
         looseTabs.forEach((tab) => movedTabIds.add(tab.id));
@@ -259,6 +262,7 @@ export function planStorageRun({
     restartBurstTabCount: normalWindows
       .flatMap((window) => window.tabs ?? [])
       .filter((tab) => burstTabIds.has(tab.id) && now - (tab.lastAccessed ?? 0) < STALE_AFTER_MS).length,
+    ungroupedTabCount,
     skippedCurrentGroups,
     rediscardTabIds,
     audibleTabIds: moves.flatMap((move) => move.audible),
