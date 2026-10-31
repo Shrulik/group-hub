@@ -186,6 +186,28 @@ describe('storage plan', () => {
     expect(result.moves.filter((move) => move.kind === 'loose').map((move) => move.title)).toEqual(['Loose 5', 'Loose 6']);
   });
 
+  it('puts all Loose groups in one storage window, after the groups', () => {
+    const windows = [
+      { id: 1, tabs: [tab(), ...tabsInGroup(10, 395)] },
+      { id: 2, tabs: [tab(), tab(), tab(), ...tabsInGroup(11, 390)] },
+      { id: 3, tabs: [tab(), tab(), tab(), ...tabsInGroup(12, 1)] }
+    ];
+    const result = plan(windows, [group(10), group(11), group(12)]);
+    const loose = result.moves.filter((move) => move.kind === 'loose');
+    expect(loose.length).toBe(3);
+    expect(new Set(loose.map((move) => move.slot)).size).toBe(1);
+    expect(result.moves.slice(-3).every((move) => move.kind === 'loose')).toBeTrue();
+  });
+
+  it('adds new Loose groups to the storage window that already has some', () => {
+    const first = { id: 8, tabs: [tab({ url: `${MARKER}?id=a` }), ...tabsInGroup(30, 10)] };
+    const second = { id: 9, tabs: [tab({ url: `${MARKER}?id=b` }), ...tabsInGroup(31, 10)] };
+    const windows = [first, second, { id: 1, tabs: [tab(), ...tabsInGroup(10, 1)] }];
+    const groups = [group(30), { id: 31, title: 'Loose 1', color: 'grey' }, group(10)];
+    const result = plan(windows, groups);
+    expect(result.moves.find((move) => move.kind === 'loose').slot).toBe(1);
+  });
+
   it('leaves loose tabs alone when a group stays or the window has no groups', () => {
     const mixed = [{ id: 1, tabs: [tab(), ...tabsInGroup(10, 1), ...tabsInGroup(11, 1, { lastAccessed: FRESH })] }];
     expect(plan(mixed, [group(10), group(11)]).looseTabCount).toBe(0);

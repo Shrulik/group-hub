@@ -10,6 +10,7 @@ const FINGERPRINT_MATCH_RATIO = 0.5;
 const RESTART_BURST_SPAN_MS = 5 * 60 * 1000;
 const RESTART_BURST_MIN_WINDOWS = 10;
 const RECENT_TABS_TO_KEEP_GROUP = 2;
+const LOOSE_TITLE = /^Loose (\d+)$/;
 
 export function storageMarkerUrl(number, id) {
   const page =
@@ -91,24 +92,47 @@ export function findRestartBurstTabIds(windows) {
 
 function highestLooseNumber(groups) {
   return groups.reduce((highest, group) => {
-    const match = /^Loose (\d+)$/.exec(group.title ?? '');
+    const match = LOOSE_TITLE.exec(group.title ?? '');
     return match ? Math.max(highest, Number(match[1])) : highest;
   }, 0);
 }
 
-function packIntoSlots(moves, storageWindows, markerPrefix) {
+function firstSlotWithRoom(slots, tabCount) {
+  return slots.findIndex((slot) => slot.tabCount + tabCount <= STORAGE_WINDOW_TAB_LIMIT);
+}
+
+function placeInSlot(move, slots, slotIndex) {
+  let index = slotIndex;
+  if (index === -1) {
+    slots.push({ existingWindowId: null, tabCount: 0 });
+    index = slots.length - 1;
+  }
+  slots[index].tabCount += move.tabCount;
+  move.slot = index;
+  return index;
+}
+
+function packIntoSlots(moves, storageWindows, markerPrefix, groupsById) {
   const slots = storageWindows.map((window) => ({
     existingWindowId: window.id,
     tabCount: window.tabs.filter((tab) => !(tab.url || tab.pendingUrl || '').startsWith(markerPrefix)).length
   }));
-  for (const move of moves) {
-    let slotIndex = slots.findIndex((slot) => slot.tabCount + move.tabCount <= STORAGE_WINDOW_TAB_LIMIT);
-    if (slotIndex === -1) {
-      slots.push({ existingWindowId: null, tabCount: 0 });
-      slotIndex = slots.length - 1;
-    }
-    slots[slotIndex].tabCount += move.tabCount;
-    move.slot = slotIndex;
+  const looseMoves = moves.filter((move) => move.kind === 'loose');
+  for (const move of moves.filter((entry) => entry.kind !== 'loose')) {
+    placeInSlot(move, slots, firstSlotWithRoom(slots, move.tabCount));
+  }
+  const looseTabCount = looseMoves.reduce((total, move) => total + move.tabCount, 0);
+  if (looseTabCount > STORAGE_WINDOW_TAB_LIMIT) {
+    looseMoves.forEach((move) => placeInSlot(move, slots, firstSlotWithRoom(slots, move.tabCount)));
+    return slots;
+  }
+  const windowWithLoose = storageWindows.findIndex((window) =>
+    window.tabs.some((tab) => LOOSE_TITLE.test(groupsById.get(tab.groupId)?.title ?? ''))
+  );
+  const hasRoom = windowWithLoose !== -1 && slots[windowWithLoose].tabCount + looseTabCount <= STORAGE_WINDOW_TAB_LIMIT;
+  let slotIndex = hasRoom ? windowWithLoose : firstSlotWithRoom(slots, looseTabCount);
+  for (const move of looseMoves) {
+    slotIndex = placeInSlot(move, slots, slotIndex);
   }
   return slots;
 }
@@ -241,7 +265,8 @@ export function planStorageRun({
     }
   }
 
-  const slots = packIntoSlots(moves, storageWindows, markerPrefix);
+  moves.sort((a, b) => Number(a.kind === 'loose') - Number(b.kind === 'loose'));
+  const slots = packIntoSlots(moves, storageWindows, markerPrefix, groupsById);
   const rediscardTabIds = storageWindows
     .filter((window) => window.state === 'minimized')
     .flatMap((window) => window.tabs)
