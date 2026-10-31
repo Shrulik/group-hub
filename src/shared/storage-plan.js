@@ -190,7 +190,7 @@ export function planStorageRun({
     const isContext = tabsByGroup.size >= 2 && tabs.length < CONTEXT_WINDOW_TAB_LIMIT;
     const memberGroupIds = isContext ? [...tabsByGroup.keys()] : [];
     const movedTabIds = new Set();
-    let allGroupsMove = tabsByGroup.size > 0;
+    let allGroupsMove = isMinimized || tabsByGroup.size > 0;
     const seenTabsOf = (groupTabs) => groupTabs.filter((tab) => now - lastSeen(tab) < STALE_AFTER_MS);
     const recordedRecently = (groupId) => now - (activity[groupId] ?? 0) < STALE_AFTER_MS;
     const isOldOnItsOwn = (groupId, groupTabs) =>

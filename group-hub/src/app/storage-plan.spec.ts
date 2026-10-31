@@ -41,6 +41,12 @@ describe('storage plan', () => {
     expect(result.recentGroups.find((entry) => entry.groupId === 11).keptByWindow).toBeFalse();
   });
 
+  it('sends a minimized window with no groups as a Loose group', () => {
+    const result = plan([{ id: 1, state: 'minimized', tabs: [tab({ lastAccessed: FRESH }), tab()] }], []);
+    expect(result.moves.map((move) => move.kind)).toEqual(['loose']);
+    expect(result.closingWindowIds).toEqual([1]);
+  });
+
   it('judges groups alone in a window of 50 tabs or more', () => {
     const windows = [{ id: 1, tabs: [...tabsInGroup(10, 48), ...tabsInGroup(11, 2, { lastAccessed: FRESH })] }];
     const result = plan(windows, [group(10), group(11)]);
