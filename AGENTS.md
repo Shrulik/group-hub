@@ -38,5 +38,6 @@ Use `npm --prefix group-hub` for commands in the Angular subfolder to avoid dire
 - Attach screenshots or clips for UI changes and link tracking issues or extension store tasks when relevant.
 
 ## Agent Operational Guidelines
+- Bump the patch version in `src/manifest.json` with every committed change. Storage windows are the `0.2.x` line.
 - Do not push changes to remote repositories unless explicitly instructed by the user.
 - Always run the full `npm run build` from the project root after changes to ensure the extension is properly packaged.

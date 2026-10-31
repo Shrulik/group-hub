@@ -156,6 +156,7 @@ export function planStorageRun({
   const closingWindowIds = [];
   const skippedCurrentGroups = [];
   let windowsKeptOpen = 0;
+  const partialWindows = [];
   let recentGroupCount = 0;
   const recentGroups = [];
   let recentGroupTabCount = 0;
@@ -261,6 +262,17 @@ export function planStorageRun({
         closingWindowIds.push(window.id);
       } else {
         windowsKeptOpen += 1;
+        const remaining = tabs.filter((tab) => !movedTabIds.has(tab.id));
+        const isUngrouped = (tab) => tab.groupId === undefined || tab.groupId === TAB_GROUP_ID_NONE;
+        partialWindows.push({
+          windowId: window.id,
+          moving: moves.filter((move) => move.sourceWindowId === window.id).map((move) => move.title),
+          staying: [...new Set(remaining.filter((tab) => !isUngrouped(tab)).map((tab) => tab.groupId))].map(
+            (groupId) => groupsById.get(groupId)?.title ?? ''
+          ),
+          pinnedTabCount: remaining.filter((tab) => tab.pinned).length,
+          ungroupedTabCount: remaining.filter((tab) => !tab.pinned && isUngrouped(tab)).length
+        });
       }
     }
   }
@@ -278,6 +290,7 @@ export function planStorageRun({
     slots,
     closingWindowIds,
     windowsKeptOpen,
+    partialWindows,
     recentGroupCount,
     recentGroups: recentGroups.sort((a, b) => a.lastSeenAt - b.lastSeenAt),
     recentGroupTabCount,

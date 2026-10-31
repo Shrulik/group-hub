@@ -41,6 +41,16 @@ describe('storage plan', () => {
     expect(result.windowsKeptOpen).toBe(1);
   });
 
+  it('explains what stays in a window that keeps some tabs', () => {
+    const windows = [{
+      id: 1,
+      tabs: [tab({ pinned: true }), tab({ lastAccessed: FRESH }), ...tabsInGroup(10, 2), ...tabsInGroup(11, 2, { lastAccessed: FRESH })]
+    }];
+    expect(plan(windows, [group(10), group(11)]).partialWindows).toEqual([
+      { windowId: 1, moving: ['g10'], staying: ['g11'], pinnedTabCount: 1, ungroupedTabCount: 1 }
+    ]);
+  });
+
   it('moves a group with only one recently seen tab', () => {
     const windows = [{ id: 1, tabs: [...tabsInGroup(10, 3), tab({ groupId: 10, active: true, lastAccessed: FRESH })] }];
     expect(plan(windows, [group(10)]).moves.map((move) => move.groupId)).toEqual([10]);

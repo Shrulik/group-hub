@@ -345,6 +345,28 @@
             <li>The group with your current tab stays</li>
           }
         </ul>
+        @if (panel.preview.partialWindows.length) {
+          <details class="storage-panel__details">
+            <summary>Windows that stay open, and why</summary>
+            <ul class="storage-panel__list">
+              @for (window of panel.preview.partialWindows; track window.windowId) {
+                <li>
+                  Moving: {{ window.moving.join(', ') || 'Untitled group' }}.
+                  Staying:
+                  @if (window.staying.length) {
+                    {{ window.staying.join(', ') || 'Untitled group' }}
+                  }
+                  @if (window.pinnedTabCount) {
+                    {{ count(window.pinnedTabCount, 'pinned tab') }}
+                  }
+                  @if (window.ungroupedTabCount) {
+                    {{ count(window.ungroupedTabCount, 'ungrouped tab') }}
+                  }
+                </li>
+              }
+            </ul>
+          </details>
+        }
         @if (panel.preview.recentGroups.length) {
           <details class="storage-panel__details">
             <summary>Groups that stay, oldest activity first</summary>
