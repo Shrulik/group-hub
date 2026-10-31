@@ -41,15 +41,29 @@ describe('storage plan', () => {
     expect(result.windowsKeptOpen).toBe(1);
   });
 
-  it('treats one recently seen tab as keeping its group fresh', () => {
-    const windows = [{ id: 1, tabs: [...tabsInGroup(10, 3), tab({ groupId: 10, lastAccessed: FRESH })] }];
+  it('moves a group with only one recently seen tab', () => {
+    const windows = [{ id: 1, tabs: [...tabsInGroup(10, 3), tab({ groupId: 10, active: true, lastAccessed: FRESH })] }];
+    expect(plan(windows, [group(10)]).moves.map((move) => move.groupId)).toEqual([10]);
+  });
+
+  it('keeps a group with two recently seen tabs', () => {
+    const windows = [{ id: 1, tabs: [...tabsInGroup(10, 3), ...tabsInGroup(10, 2, { lastAccessed: FRESH })] }];
+    expect(plan(windows, [group(10)]).moves).toEqual([]);
+  });
+
+  it('keeps a one-tab group whose tab was recently seen', () => {
+    const windows = [{ id: 1, tabs: tabsInGroup(10, 1, { lastAccessed: FRESH }) }];
     expect(plan(windows, [group(10)]).moves).toEqual([]);
   });
 
   const restartedWindows = (count) =>
     Array.from({ length: count }, (_unused, index) => ({
       id: 100 + index,
-      tabs: [tab({ groupId: 200 + index, active: true, lastAccessed: FRESH - index * 1000 }), ...tabsInGroup(200 + index, 2)]
+      tabs: [
+        tab({ groupId: 200 + index, active: true, lastAccessed: FRESH - index * 1000 }),
+        tab({ groupId: 200 + index, lastAccessed: FRESH - index * 1000 }),
+        ...tabsInGroup(200 + index, 2)
+      ]
     }));
   const groupsFor = (count) => Array.from({ length: count }, (_unused, index) => group(200 + index));
 
@@ -58,7 +72,7 @@ describe('storage plan', () => {
     expect(result.groupCount).toBe(12);
     expect(result.recentGroupCount).toBe(0);
     expect(result.closingWindowIds.length).toBe(12);
-    expect(result.restartBurstTabCount).toBe(12);
+    expect(result.restartBurstTabCount).toBe(24);
   });
 
   it('keeps groups recent when too few windows were touched for a restart', () => {
@@ -86,16 +100,14 @@ describe('storage plan', () => {
       { id: 2, tabs: [tab({ groupId: 11, lastAccessed: FRESH }), tab({ groupId: 11, lastAccessed: FRESH }), ...tabsInGroup(11, 1)] },
       { id: 3, tabs: [tab()] }
     ];
-    const result = plan(windows, [group(10), group(11)]);
+    const result = plan(windows, [group(10), group(11)], { activity: { 10: FRESH } });
     expect(result.recentGroupCount).toBe(2);
     expect(result.recentGroupTabCount).toBe(8);
     expect(result.recentlySeenTabCount).toBe(3);
-    expect(result.visibleTabOnlyGroupCount).toBe(1);
     expect(result.untouchedWindowCount).toBe(3);
-    expect(result.recentGroups.map((entry) => [entry.groupId, entry.seenTabCount, entry.tabCount])).toEqual(
-      jasmine.arrayWithExactContents([[10, 1, 5], [11, 2, 3]])
+    expect(result.recentGroups.map((entry) => [entry.groupId, entry.seenTabCount, entry.tabCount, entry.recorded])).toEqual(
+      jasmine.arrayWithExactContents([[10, 1, 5, true], [11, 2, 3, false]])
     );
-    expect(result.recentGroups.find((entry) => entry.groupId === 10).visibleTabOnly).toBeTrue();
   });
 
   it('uses recorded activity when lastAccessed is old', () => {

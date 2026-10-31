@@ -9,6 +9,7 @@ const TAB_GROUP_ID_NONE = -1;
 const FINGERPRINT_MATCH_RATIO = 0.5;
 const RESTART_BURST_SPAN_MS = 5 * 60 * 1000;
 const RESTART_BURST_MIN_WINDOWS = 10;
+const RECENT_TABS_TO_KEEP_GROUP = 2;
 
 export function storageMarkerUrl(number, id) {
   const page =
@@ -92,12 +93,6 @@ export function findRestartBurstTabIds(windows) {
   return burstIds;
 }
 
-export function lastActivityOfGroup(tabs, recordedActivity = 0, ignoredTabIds = new Set()) {
-  return tabs
-    .filter((tab) => !ignoredTabIds.has(tab.id))
-    .reduce((latest, tab) => Math.max(latest, tab.lastAccessed ?? 0), recordedActivity);
-}
-
 function highestLooseNumber(groups) {
   return groups.reduce((highest, group) => {
     const match = /^Loose (\d+)$/.exec(group.title ?? '');
@@ -145,7 +140,6 @@ export function planStorageRun({
   const recentGroups = [];
   let recentGroupTabCount = 0;
   let recentlySeenTabCount = 0;
-  let visibleTabOnlyGroupCount = 0;
   let looseCounter = highestLooseNumber(groups);
 
   for (const window of normalWindows) {
@@ -174,14 +168,14 @@ export function planStorageRun({
         allGroupsMove = false;
         continue;
       }
-      const stale = now - lastActivityOfGroup(groupTabs, activity[groupId] ?? 0, burstTabIds) >= STALE_AFTER_MS;
+      const seenTabs = groupTabs.filter((tab) => now - lastSeen(tab) < STALE_AFTER_MS);
+      const recordedRecently = now - (activity[groupId] ?? 0) < STALE_AFTER_MS;
+      const stale = !recordedRecently && seenTabs.length < Math.min(RECENT_TABS_TO_KEEP_GROUP, groupTabs.length);
       const holdsCurrentTab = window.focused && groupTabs.some((tab) => tab.active);
       if (mode === STORAGE_MODE_STALE && holdsCurrentTab && stale) {
         skippedCurrentGroups.push(groupId);
       }
       if (mode === STORAGE_MODE_STALE && !stale) {
-        const seenTabs = groupTabs.filter((tab) => now - lastSeen(tab) < STALE_AFTER_MS);
-        const recordedRecently = now - (activity[groupId] ?? 0) < STALE_AFTER_MS;
         recentGroupCount += 1;
         recentGroups.push({
           groupId,
@@ -189,14 +183,10 @@ export function planStorageRun({
           tabCount: groupTabs.length,
           seenTabCount: seenTabs.length,
           lastSeenAt: Math.max(activity[groupId] ?? 0, ...groupTabs.map(lastSeen)),
-          recorded: recordedRecently,
-          visibleTabOnly: !recordedRecently && seenTabs.length === 1 && seenTabs[0].active
+          recorded: recordedRecently
         });
         recentGroupTabCount += groupTabs.length;
         recentlySeenTabCount += seenTabs.length;
-        if (!recordedRecently && seenTabs.length === 1 && seenTabs[0].active) {
-          visibleTabOnlyGroupCount += 1;
-        }
       }
       if (mode === STORAGE_MODE_STALE && (!stale || holdsCurrentTab)) {
         allGroupsMove = false;
@@ -264,7 +254,6 @@ export function planStorageRun({
     recentGroups: recentGroups.sort((a, b) => a.lastSeenAt - b.lastSeenAt),
     recentGroupTabCount,
     recentlySeenTabCount,
-    visibleTabOnlyGroupCount,
     untouchedWindowCount:
       normalWindows.length - storageWindows.length - closingWindowIds.length - windowsKeptOpen,
     restartBurstTabCount: normalWindows

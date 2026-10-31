@@ -299,7 +299,7 @@
       } @else {
         <p class="storage-panel__copy">
           @if (panel.mode === storageModes.stale) {
-            Moves groups with no activity for three weeks into minimized storage windows and unloads their tabs to free memory.
+            Moves groups with at most one tab used in the last three weeks into minimized storage windows and unloads their tabs to free memory.
           } @else {
             Moves every group in this window into minimized storage windows and unloads their tabs to free memory.
           }
@@ -320,9 +320,6 @@
               {{ count(panel.preview.recentGroupCount, 'group') }} with {{ count(panel.preview.recentGroupTabCount, 'tab') }} stay,
               because {{ count(panel.preview.recentlySeenTabCount, 'tab') }} in them had recent activity
             </li>
-            @if (panel.preview.visibleTabOnlyGroupCount) {
-              <li>{{ count(panel.preview.visibleTabOnlyGroupCount, 'group') }} of those stay only because of the tab their window is showing</li>
-            }
           }
           @if (panel.preview.untouchedWindowCount) {
             <li>{{ count(panel.preview.untouchedWindowCount, 'other window') }} won't change</li>
@@ -342,9 +339,7 @@
                 <li>
                   {{ group.title || 'Untitled group' }}: {{ group.seenTabCount }} of {{ count(group.tabCount, 'tab') }},
                   {{ formatTimestamp(group.lastSeenAt) }}
-                  @if (group.visibleTabOnly) {
-                    (only the tab its window is showing)
-                  } @else if (group.recorded) {
+                  @if (group.recorded) {
                     (activity seen by Group Hub)
                   }
                 </li>
