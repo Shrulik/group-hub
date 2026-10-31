@@ -310,7 +310,7 @@
       } @else {
         <p class="storage-panel__copy">
           @if (panel.mode === storageModes.stale) {
-            Moves everything in minimized windows, and groups elsewhere with at most one tab used in the last three weeks, into minimized storage windows and unloads their tabs to free memory.
+            Moves everything in minimized windows, and windows where no group has two tabs used in the last three weeks, into minimized storage windows and unloads their tabs to free memory.
           } @else {
             Moves every group in this window into minimized storage windows and unloads their tabs to free memory.
             @if (panel.preview.ungroupedTabCount) {
@@ -332,20 +332,20 @@
           }
           <li>{{ count(panel.preview.newStorageWindowCount, 'new storage window') }}</li>
           <li>{{ count(panel.preview.closingWindowCount, 'window') }} will close because nothing is left in them</li>
-          @if (panel.preview.windowsKeptOpen) {
-            <li>{{ count(panel.preview.windowsKeptOpen, 'window') }} will stay open with the remaining tabs</li>
-          }
           @if (panel.preview.recentGroupCount) {
             <li>
               {{ count(panel.preview.recentGroupCount, 'group') }} with {{ count(panel.preview.recentGroupTabCount, 'tab') }} stay,
               because {{ count(panel.preview.recentlySeenTabCount, 'tab') }} in them had recent activity
             </li>
           }
-          @if (panel.preview.untouchedWindowCount) {
-            <li>{{ count(panel.preview.untouchedWindowCount, 'other window') }} won't change</li>
+          @if (panel.preview.windowsKeptOpen + panel.preview.untouchedWindowCount) {
+            <li>
+              {{ count(panel.preview.windowsKeptOpen + panel.preview.untouchedWindowCount, 'window') }} stay open:
+              {{ panel.preview.windowsKeptOpen }} lose some tabs, {{ panel.preview.untouchedWindowCount }} don't change
+            </li>
           }
           @if (panel.preview.restartBurstTabCount) {
-            <li>{{ count(panel.preview.restartBurstTabCount, 'tab') }} ignored as recent because a Chrome restart touched them</li>
+            <li>{{ count(panel.preview.restartBurstTabCount, 'tab') }} count as unused, because their recent date came from a Chrome restart</li>
           }
           @if (panel.preview.skippedCurrentGroupCount) {
             <li>The group with your current tab stays</li>
@@ -381,7 +381,9 @@
                 <li>
                   {{ group.title || 'Untitled group' }}: {{ group.seenTabCount }} of {{ count(group.tabCount, 'tab') }},
                   {{ formatTimestamp(group.lastSeenAt) }}
-                  @if (group.recorded) {
+                  @if (group.keptByWindow) {
+                    (kept with a recent group in its window)
+                  } @else if (group.recorded) {
                     (activity seen by Group Hub)
                   }
                 </li>

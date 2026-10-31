@@ -33,21 +33,26 @@ const plan = (windows, groups, overrides = {}) =>
   planStorageRun({ windows, groups, now: NOW, mode: STORAGE_MODE_STALE, markerPrefix: MARKER, ...overrides });
 
 describe('storage plan', () => {
-  it('moves only stale groups and keeps the window open', () => {
+  it('keeps every group in a window when one of them is recent', () => {
     const windows = [{ id: 1, tabs: [...tabsInGroup(10, 2), ...tabsInGroup(11, 2, { lastAccessed: FRESH })] }];
     const result = plan(windows, [group(10), group(11)]);
-    expect(result.moves.map((move) => move.groupId)).toEqual([10]);
-    expect(result.closingWindowIds).toEqual([]);
-    expect(result.windowsKeptOpen).toBe(1);
+    expect(result.moves).toEqual([]);
+    expect(result.recentGroups.find((entry) => entry.groupId === 10).keptByWindow).toBeTrue();
+    expect(result.recentGroups.find((entry) => entry.groupId === 11).keptByWindow).toBeFalse();
+  });
+
+  it('moves groups from other windows when one window is in use', () => {
+    const windows = [{ id: 1, tabs: tabsInGroup(11, 2, { lastAccessed: FRESH }) }, { id: 2, tabs: tabsInGroup(10, 2) }];
+    expect(plan(windows, [group(10), group(11)]).moves.map((move) => move.groupId)).toEqual([10]);
   });
 
   it('explains what stays in a window that keeps some tabs', () => {
     const windows = [{
       id: 1,
-      tabs: [tab({ pinned: true }), tab({ lastAccessed: FRESH }), ...tabsInGroup(10, 2), ...tabsInGroup(11, 2, { lastAccessed: FRESH })]
+      tabs: [tab({ pinned: true }), tab({ lastAccessed: FRESH }), ...tabsInGroup(10, 2)]
     }];
-    expect(plan(windows, [group(10), group(11)]).partialWindows).toEqual([
-      { windowId: 1, moving: ['g10'], staying: ['g11'], pinnedTabCount: 1, ungroupedTabCount: 1 }
+    expect(plan(windows, [group(10)]).partialWindows).toEqual([
+      { windowId: 1, moving: ['g10'], staying: [], pinnedTabCount: 1, ungroupedTabCount: 1 }
     ]);
   });
 
@@ -140,8 +145,8 @@ describe('storage plan', () => {
     expect(plan(windows, [group(10)], { activity: { 10: FRESH } }).moves).toEqual([]);
   });
 
-  it('records a context for a small window with several groups, including fresh members', () => {
-    const windows = [{ id: 1, tabs: [...tabsInGroup(10, 2), ...tabsInGroup(11, 2, { lastAccessed: FRESH })] }];
+  it('records a context for a small window with several groups', () => {
+    const windows = [{ id: 1, tabs: [...tabsInGroup(10, 2), ...tabsInGroup(11, 2)] }];
     expect(plan(windows, [group(10), group(11)]).moves[0].contextGroupIds).toEqual([10, 11]);
   });
 
@@ -181,10 +186,10 @@ describe('storage plan', () => {
     expect(result.moves.length).toBe(1);
   });
 
-  it('skips the group holding the current tab in a stale run', () => {
+  it('keeps the window holding the current tab in a stale run', () => {
     const windows = [{ id: 1, focused: true, tabs: [tab({ groupId: 10, active: true }), ...tabsInGroup(11, 1)] }];
     const result = plan(windows, [group(10), group(11)]);
-    expect(result.moves.map((move) => move.groupId)).toEqual([11]);
+    expect(result.moves).toEqual([]);
     expect(result.skippedCurrentGroups).toEqual([10]);
   });
 

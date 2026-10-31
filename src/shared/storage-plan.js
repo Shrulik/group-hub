@@ -191,6 +191,14 @@ export function planStorageRun({
     const memberGroupIds = isContext ? [...tabsByGroup.keys()] : [];
     const movedTabIds = new Set();
     let allGroupsMove = tabsByGroup.size > 0;
+    const seenTabsOf = (groupTabs) => groupTabs.filter((tab) => now - lastSeen(tab) < STALE_AFTER_MS);
+    const recordedRecently = (groupId) => now - (activity[groupId] ?? 0) < STALE_AFTER_MS;
+    const isOldOnItsOwn = (groupId, groupTabs) =>
+      !recordedRecently(groupId) && seenTabsOf(groupTabs).length < Math.min(RECENT_TABS_TO_KEEP_GROUP, groupTabs.length);
+    const holdsCurrent = (groupTabs) => window.focused && groupTabs.some((tab) => tab.active);
+    const windowInUse = [...tabsByGroup].some(
+      ([groupId, groupTabs]) => groupsById.has(groupId) && (!isOldOnItsOwn(groupId, groupTabs) || holdsCurrent(groupTabs))
+    );
 
     for (const [groupId, groupTabs] of tabsByGroup) {
       const group = groupsById.get(groupId);
@@ -198,11 +206,11 @@ export function planStorageRun({
         allGroupsMove = false;
         continue;
       }
-      const seenTabs = groupTabs.filter((tab) => now - lastSeen(tab) < STALE_AFTER_MS);
-      const recordedRecently = now - (activity[groupId] ?? 0) < STALE_AFTER_MS;
-      const stale = isMinimized || !recordedRecently && seenTabs.length < Math.min(RECENT_TABS_TO_KEEP_GROUP, groupTabs.length);
-      const holdsCurrentTab = window.focused && groupTabs.some((tab) => tab.active);
-      if (mode === STORAGE_MODE_STALE && holdsCurrentTab && stale) {
+      const seenTabs = seenTabsOf(groupTabs);
+      const oldOnItsOwn = isOldOnItsOwn(groupId, groupTabs);
+      const stale = isMinimized || !windowInUse;
+      const holdsCurrentTab = holdsCurrent(groupTabs);
+      if (mode === STORAGE_MODE_STALE && holdsCurrentTab && oldOnItsOwn) {
         skippedCurrentGroups.push(groupId);
       }
       if (mode === STORAGE_MODE_STALE && !stale) {
@@ -213,7 +221,8 @@ export function planStorageRun({
           tabCount: groupTabs.length,
           seenTabCount: seenTabs.length,
           lastSeenAt: Math.max(activity[groupId] ?? 0, ...groupTabs.map(lastSeen)),
-          recorded: recordedRecently
+          recorded: recordedRecently(groupId),
+          keptByWindow: oldOnItsOwn
         });
         recentGroupTabCount += groupTabs.length;
         recentlySeenTabCount += seenTabs.length;
