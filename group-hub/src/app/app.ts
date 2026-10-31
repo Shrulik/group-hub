@@ -25,7 +25,7 @@ import {
   getProfileBackupHandle,
   setBackupDirectoryHandle
 } from '@group-hub/shared/backup-storage';
-import { BACKUP_SETTINGS_KEY, PRE_RUN_BACKUP_FILE_NAME } from '@group-hub/shared/constants';
+import { BACKUP_SETTINGS_KEY, PRE_RUN_BACKUP_FILE_NAME, STORAGE_RUN_PROGRESS_KEY } from '@group-hub/shared/constants';
 import { STORAGE_MODE_STALE, STORAGE_MODE_WINDOW } from '@group-hub/shared/storage-plan';
 import { GroupHubStore } from './services/group-hub.store';
 
@@ -75,6 +75,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
   lastMoveAction = signal(null); // Keep for backward compatibility, but will load from storage
 
   storagePanel = signal(null);
+  storageRunProgress = signal(null);
   popOutChoice = signal(null);
 
   storageModes = { stale: STORAGE_MODE_STALE, window: STORAGE_MODE_WINDOW };
@@ -131,6 +132,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
 
   async ngOnInit() {
     this.backupPanelVisible.set(this.openedForBackupSetup);
+    await this.watchStorageRunProgress();
     try {
       await this.store.init();
       await this.loadLastMoveAction();
@@ -152,6 +154,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
 
   ngOnDestroy() {
     window.removeEventListener('focus', this.focusHandler);
+    globalThis.chrome?.storage?.onChanged?.removeListener(this.storageRunProgressListener);
     if (this.searchDebounceTimer) {
       clearTimeout(this.searchDebounceTimer);
     }
@@ -243,7 +246,48 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     return mode === STORAGE_MODE_WINDOW ? (await chrome.windows.getCurrent()).id : undefined;
   }
 
+  storageRunProgressListener = (changes, area) => {
+    if (area === 'session' && changes[STORAGE_RUN_PROGRESS_KEY]) {
+      this.storageRunProgress.set(changes[STORAGE_RUN_PROGRESS_KEY].newValue ?? null);
+    }
+  };
+
+  async watchStorageRunProgress() {
+    const session = globalThis.chrome?.storage?.session;
+    if (!session) {
+      return;
+    }
+    chrome.storage.onChanged.addListener(this.storageRunProgressListener);
+    const stored = await session.get(STORAGE_RUN_PROGRESS_KEY);
+    this.storageRunProgress.set(stored[STORAGE_RUN_PROGRESS_KEY] ?? null);
+  }
+
+  windowsStayingText({ windowsKeptOpen, untouchedWindowCount }) {
+    const total = windowsKeptOpen + untouchedWindowCount;
+    const parts = [];
+    if (windowsKeptOpen) {
+      parts.push(`${windowsKeptOpen} ${windowsKeptOpen === 1 ? 'loses' : 'lose'} some tabs`);
+    }
+    if (untouchedWindowCount) {
+      parts.push(`${untouchedWindowCount} ${untouchedWindowCount === 1 ? "doesn't" : "don't"} change`);
+    }
+    return `${this.count(total, 'window')} ${total === 1 ? 'stays' : 'stay'} open: ${parts.join(', ')}`;
+  }
+
+  storageRunProgressText(progress) {
+    const failed = progress.failed ? `, ${progress.failed} failed` : '';
+    return `${progress.moved + progress.failed} of ${progress.total} done${failed}. Windows close when it finishes.`;
+  }
+
+  storageRunProgressPercent(progress) {
+    return progress.total ? ((progress.moved + progress.failed) / progress.total) * 100 : 0;
+  }
+
   async openStoragePanel(mode) {
+    if (this.storageRunProgress()) {
+      this.flashStatus('Group Hub is still sending to storage. Try again when it finishes.', 'error');
+      return;
+    }
     try {
       const windowId = await this.targetWindowFor(mode);
       const preview = await this.store.storageRequest('storagePreview', { mode, windowId });
@@ -263,8 +307,9 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     if (!panel) {
       return;
     }
-    this.storagePanel.set(null);
+    this.storagePanel.set({ ...panel, running: true });
     if (!(await this.savePreRunBackup(panel.preview.incompleteRun))) {
+      this.storagePanel.set(null);
       return;
     }
     try {
@@ -275,6 +320,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
       if (result?.blocked === 'audible') {
         this.storagePanel.set({ ...panel, preview: { ...panel.preview, audibleTabs: result.audibleTabs } });
       } else if (result) {
+        this.storagePanel.set(null);
         this.flashStatus(
           `${this.count(result.movedGroups, 'group')} stored${result.failed ? `, ${result.failed} failed. Send again to retry` : ''}.`,
           result.failed ? 'error' : 'success'
@@ -282,6 +328,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
       }
     } catch (error) {
       console.error('[GroupHub] storage run failed', error);
+      this.storagePanel.set(null);
       this.flashStatus('The storage run failed. Send again to retry.', 'error');
     }
   }

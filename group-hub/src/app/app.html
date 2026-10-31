@@ -33,6 +33,15 @@
     </select>
   </div>
 
+  @if (storageRunProgress(); as progress) {
+    @if (!storagePanel()?.running) {
+      <section class="status" role="status">
+        Sending to storage: {{ storageRunProgressText(progress) }}
+        <div class="storage-progress"><div class="storage-progress__fill" [style.width.%]="storageRunProgressPercent(progress)"></div></div>
+      </section>
+    }
+  }
+
   @if (statusMessage(); as status) {
     <section class="status" [class.status--error]="status.tone === 'error'"
       [class.status--success]="status.tone === 'success'">
@@ -340,8 +349,7 @@
           }
           @if (panel.preview.windowsKeptOpen + panel.preview.untouchedWindowCount) {
             <li>
-              {{ count(panel.preview.windowsKeptOpen + panel.preview.untouchedWindowCount, 'window') }} stay open:
-              {{ panel.preview.windowsKeptOpen }} lose some tabs, {{ panel.preview.untouchedWindowCount }} don't change
+              {{ windowsStayingText(panel.preview) }}
             </li>
           }
           @if (panel.preview.restartBurstTabCount) {
@@ -391,12 +399,23 @@
             </ul>
           </details>
         }
-        <div class="restore-panel__actions">
-          <button type="button" class="utility-menu__btn" (click)="confirmStorageRun()">
-            {{ panel.preview.ungroupedTabCount ? 'Send only the groups' : 'Send to storage' }}
-          </button>
-          <button type="button" class="utility-menu__btn" (click)="closeStoragePanel()">Cancel</button>
-        </div>
+        @if (panel.running) {
+          <div role="status">
+            @if (storageRunProgress(); as progress) {
+              <div class="storage-progress"><div class="storage-progress__fill" [style.width.%]="storageRunProgressPercent(progress)"></div></div>
+              <p class="storage-panel__copy">{{ storageRunProgressText(progress) }}</p>
+            } @else {
+              <p class="storage-panel__copy">Saving a backup first…</p>
+            }
+          </div>
+        } @else {
+          <div class="restore-panel__actions">
+            <button type="button" class="utility-menu__btn" (click)="confirmStorageRun()">
+              {{ panel.preview.ungroupedTabCount ? 'Send only the groups' : 'Send to storage' }}
+            </button>
+            <button type="button" class="utility-menu__btn" (click)="closeStoragePanel()">Cancel</button>
+          </div>
+        }
       }
     </section>
   }

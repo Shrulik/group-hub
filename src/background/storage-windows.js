@@ -2,6 +2,7 @@ import {
   SESSION_READY_ALARM_NAME,
   SESSION_READY_DELAY_MINUTES,
   STORAGE_ACTIVITY_KEY,
+  STORAGE_RUN_PROGRESS_KEY,
   STORAGE_SESSION_KEY,
   STORAGE_STATE_KEY,
   STORAGE_WINDOW_ACTIVITY_KEY
@@ -50,6 +51,8 @@ export function createStorageWindows({ refreshSnapshot }) {
     };
     activity = stored[STORAGE_ACTIVITY_KEY] ?? {};
     windowActivity = stored[STORAGE_WINDOW_ACTIVITY_KEY] ?? {};
+    await removePlaceholders();
+    await chrome.storage.session.remove(STORAGE_RUN_PROGRESS_KEY);
     const session = await chrome.storage.session.get({ [STORAGE_SESSION_KEY]: false });
     if (session[STORAGE_SESSION_KEY]) {
       lifecycle.resumeReady();
@@ -227,7 +230,6 @@ export function createStorageWindows({ refreshSnapshot }) {
 
   async function clearActiveTabs(plan, windows) {
     const movedTabIds = new Set(plan.moves.flatMap((move) => move.tabIds));
-    const placeholders = [];
     for (const window of windows) {
       const tabs = window.tabs ?? [];
       const active = tabs.find((tab) => tab.active);
@@ -240,11 +242,33 @@ export function createStorageWindows({ refreshSnapshot }) {
         await chrome.tabs.update(next.id, { active: true });
       } else {
         const placeholder = await chrome.tabs.create({ windowId: window.id, url: BLANK_URL, active: true });
-        placeholders.push(placeholder.id);
+        state.placeholderTabIds = [...(state.placeholderTabIds ?? []), placeholder.id];
+        await saveState();
       }
     }
-    return placeholders;
   }
+
+  async function removePlaceholders() {
+    const tabIds = state.placeholderTabIds ?? [];
+    if (!tabIds.length) {
+      return;
+    }
+    for (const tabId of tabIds) {
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        if ((tab.url || tab.pendingUrl) === BLANK_URL && tab.groupId < 0) {
+          await chrome.tabs.remove(tabId);
+        }
+      } catch (error) {
+        console.debug('[GroupHub] unable to remove placeholder tab', error);
+      }
+    }
+    state.placeholderTabIds = [];
+    await saveState();
+  }
+
+  const reportProgress = (moved, total, failed) =>
+    chrome.storage.session.set({ [STORAGE_RUN_PROGRESS_KEY]: { moved, total, failed } });
 
   async function resolveSlotWindows(plan, windows) {
     const prefix = markerPrefix();
@@ -335,7 +359,13 @@ export function createStorageWindows({ refreshSnapshot }) {
   }
 
   function run(mode = STORAGE_MODE_STALE, windowId) {
-    return lifecycle.exclusive(() => moveToStorage(mode, windowId), () => refreshSnapshot('storage run finished'));
+    return lifecycle.exclusive(async () => {
+      try {
+        return await moveToStorage(mode, windowId);
+      } finally {
+        await chrome.storage.session.remove(STORAGE_RUN_PROGRESS_KEY);
+      }
+    }, () => refreshSnapshot('storage run finished'));
   }
 
   async function moveToStorage(mode, windowId) {
@@ -347,10 +377,11 @@ export function createStorageWindows({ refreshSnapshot }) {
     state.incompleteRun = true;
     const contextIds = await ensureContexts(plan);
     await saveState();
-    const placeholders = await clearActiveTabs(plan, windows);
+    await clearActiveTabs(plan, windows);
     const slotWindows = await resolveSlotWindows(plan, windows);
     let movedGroups = 0;
     let failed = 0;
+    await reportProgress(0, plan.moves.length, 0);
 
     for (const move of plan.moves) {
       try {
@@ -361,16 +392,11 @@ export function createStorageWindows({ refreshSnapshot }) {
         console.error('[GroupHub] failed to move group to storage', error);
         failed += 1;
       }
+      await reportProgress(movedGroups, plan.moves.length, failed);
     }
 
     await discardTabs(plan.rediscardTabIds);
-    for (const placeholder of placeholders) {
-      try {
-        await chrome.tabs.remove(placeholder);
-      } catch (error) {
-        console.debug('[GroupHub] unable to remove placeholder tab', error);
-      }
-    }
+    await removePlaceholders();
     await sleep(MINIMIZE_RETRY_MS);
     await discardStorageMarkers();
     state.incompleteRun = failed > 0;

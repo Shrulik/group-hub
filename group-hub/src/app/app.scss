@@ -140,6 +140,21 @@ app-root {
   color: var(--gh-status-info-text);
 }
 
+.storage-progress {
+  height: 4px;
+  margin-top: 8px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--gh-accent-soft);
+}
+
+.storage-progress__fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--gh-accent);
+  transition: width 0.2s ease;
+}
+
 .status--success {
   background: var(--gh-status-success-bg);
   color: var(--gh-status-success-text);
