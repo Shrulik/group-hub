@@ -14,13 +14,17 @@ import {
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
-  backupFolderName,
   getBackupStatusForHandle,
   readBackupFile,
   writePreRunBackup,
   writeRotatingBackup
 } from '@group-hub/shared/backup-files';
-import { getBackupDirectoryHandle, setBackupDirectoryHandle } from '@group-hub/shared/backup-storage';
+import {
+  getChosenBackupHandle,
+  getChosenHandleIfAllowed,
+  getProfileBackupHandle,
+  setBackupDirectoryHandle
+} from '@group-hub/shared/backup-storage';
 import { BACKUP_SETTINGS_KEY, PRE_RUN_BACKUP_FILE_NAME } from '@group-hub/shared/constants';
 import { STORAGE_MODE_STALE, STORAGE_MODE_WINDOW } from '@group-hub/shared/storage-plan';
 import { GroupHubStore } from './services/group-hub.store';
@@ -280,19 +284,17 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
 
   async savePreRunBackup(keepExisting) {
     try {
-      const handle = await getBackupDirectoryHandle();
+      const handle = await getProfileBackupHandle();
       if (!handle) {
         this.flashStatus('No backup location is available, so nothing was moved.', 'error');
-        return false;
-      }
-      if (!(await this.ensureBackupPermission(handle))) {
-        this.flashStatus('Backup folder permission was not granted, so nothing was moved.', 'error');
         return false;
       }
       if (keepExisting && (await getBackupStatusForHandle(handle)).preRunBackup) {
         return true;
       }
-      await writePreRunBackup(handle, await this.store.exportData());
+      const payload = await this.store.exportData();
+      await writePreRunBackup(handle, payload);
+      await this.copyToChosenFolder((chosen) => writePreRunBackup(chosen, payload));
       await this.loadBackupStatus();
       return true;
     } catch (error) {
@@ -470,7 +472,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
     try {
       let result;
       if (source === 'pre-run') {
-        const handle = await getBackupDirectoryHandle();
+        const handle = await getProfileBackupHandle();
         result = await this.store.importData(await readBackupFile(handle, PRE_RUN_BACKUP_FILE_NAME), mode);
         await this.loadBackupStatus();
       } else if (source === 'backup') {
@@ -526,7 +528,7 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
       }
       await setBackupDirectoryHandle(handle);
       this.backupStatus.set(await this.writeBackupFromPage({ force: true }));
-      this.flashStatus('Backup folder saved.', 'success');
+      this.flashStatus('Backup folder saved. Chrome may ask for permission again after Group Hub closes.', 'success');
     } catch (error) {
       if (error?.name === 'AbortError') {
         return;
@@ -538,18 +540,10 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
 
   async runBackupNow() {
     try {
-      const handle = await getBackupDirectoryHandle();
-      if (!handle) {
-        this.flashStatus('Choose a backup folder first.', 'error');
-        return;
-      }
-      const allowed = await this.ensureBackupPermission(handle);
-      if (!allowed) {
-        this.flashStatus('Backup folder permission was not granted.', 'error');
-        return;
-      }
+      const chosen = await getChosenBackupHandle();
+      const allowed = !chosen || (await this.ensureBackupPermission(chosen));
       this.backupStatus.set(await this.writeBackupFromPage({ force: true }));
-      this.flashStatus('Backup saved.', 'success');
+      this.flashStatus(allowed ? 'Backup saved.' : 'Backup saved in the Chrome profile only.', allowed ? 'success' : 'error');
     } catch (error) {
       console.error('[GroupHub] backup failed', error);
       this.flashStatus(this.errorMessage(error, 'Backup failed.'), 'error');
@@ -557,32 +551,46 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async readBackupStatus() {
-    const handle = await getBackupDirectoryHandle();
-    const settings = await this.readBackupSettings();
-    return getBackupStatusForHandle(handle, settings);
+    const status = await getBackupStatusForHandle(await getProfileBackupHandle(), await this.readBackupSettings());
+    const chosen = await getChosenBackupHandle();
+    return {
+      ...status,
+      chosenFolderName: chosen?.name ?? null,
+      chosenAllowed: Boolean(await getChosenHandleIfAllowed())
+    };
+  }
+
+  async copyToChosenFolder(write) {
+    try {
+      const chosen = await getChosenHandleIfAllowed();
+      if (chosen) {
+        await write(chosen);
+      }
+    } catch (error) {
+      console.error('[GroupHub] unable to copy backup to chosen folder', error);
+    }
   }
 
   async writeBackupFromPage({ force }) {
-    const handle = await getBackupDirectoryHandle();
+    const handle = await getProfileBackupHandle();
     if (!handle) {
-      return getBackupStatusForHandle(null, await this.readBackupSettings());
+      return this.readBackupStatus();
     }
-
     const payload = await this.store.exportData();
-    const result = await writeRotatingBackup(handle, payload, { force });
-    const latestBackup = result.status.latestBackup;
+    await writeRotatingBackup(handle, payload, { force });
+    await this.copyToChosenFolder((chosen) => writeRotatingBackup(chosen, payload, { force }));
+    const status = await this.readBackupStatus();
+    const latestBackup = status.latestBackup;
     await this.saveBackupSettings({
-      folderName: backupFolderName(handle),
       lastBackupAt: latestBackup?.generatedAt ?? null,
       lastBackupDate: latestBackup?.backupDate ?? null,
-      lastBackupFile: latestBackup?.fileName ?? null,
       lastError: null
     });
-    return result.status;
+    return status;
   }
 
   async readLatestBackupPayload() {
-    const handle = await getBackupDirectoryHandle();
+    const handle = await getProfileBackupHandle();
     const status = await getBackupStatusForHandle(handle, await this.readBackupSettings());
     if (status.permission !== 'granted' || !status.latestBackup) {
       throw new Error('No readable backup is available.');
@@ -627,13 +635,13 @@ export class App implements OnInit, AfterViewInit, OnDestroy {
 
   backupStatusText() {
     const status = this.backupStatus();
-    if (!status?.configured) {
-      return 'No backup folder selected.';
+    if (!status?.chosenFolderName) {
+      return 'Saving in the Chrome profile on this Mac.';
     }
-    if (status.permission !== 'granted') {
-      return `Permission needed for ${status.folderName ?? 'backup folder'}.`;
+    if (status.chosenAllowed) {
+      return `Saving in the Chrome profile and ${status.chosenFolderName}.`;
     }
-    return `Folder: ${status.folderName}`;
+    return `Saving in the Chrome profile. To also save to ${status.chosenFolderName}, click Backup now and allow access. Choose "every visit" if Chrome offers it.`;
   }
 
   backupLastText() {

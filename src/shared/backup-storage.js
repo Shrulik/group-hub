@@ -1,3 +1,5 @@
+import { queryBackupPermission } from './backup-files.js';
+
 const BACKUP_DB_NAME = 'group-hub-backups';
 const BACKUP_DB_VERSION = 1;
 const BACKUP_STORE_NAME = 'handles';
@@ -42,12 +44,20 @@ function withBackupStore(mode, callback) {
   );
 }
 
-export async function getBackupDirectoryHandle() {
+export async function getChosenBackupHandle() {
   if (typeof indexedDB === 'undefined') {
     return null;
   }
-  const chosen = await withBackupStore('readonly', (store) => store.get(BACKUP_DIRECTORY_HANDLE_KEY));
-  return chosen ?? (await navigator.storage?.getDirectory?.()) ?? null;
+  return (await withBackupStore('readonly', (store) => store.get(BACKUP_DIRECTORY_HANDLE_KEY))) ?? null;
+}
+
+export async function getProfileBackupHandle() {
+  return (await navigator.storage?.getDirectory?.()) ?? null;
+}
+
+export async function getChosenHandleIfAllowed() {
+  const chosen = await getChosenBackupHandle();
+  return chosen && (await queryBackupPermission(chosen)) === 'granted' ? chosen : null;
 }
 
 export async function setBackupDirectoryHandle(handle) {

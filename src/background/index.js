@@ -18,12 +18,10 @@ import {
   normalizeBackupPayload
 } from '../shared/backup-format.js';
 import {
-  backupFolderName,
-  queryBackupPermission,
   writeLatestBackup,
   writeRotatingBackup
 } from '../shared/backup-files.js';
-import { getBackupDirectoryHandle } from '../shared/backup-storage.js';
+import { getChosenHandleIfAllowed, getProfileBackupHandle } from '../shared/backup-storage.js';
 import { createStorageWindows } from './storage-windows.js';
 
 const TAB_GROUP_ID_NONE = -1;
@@ -363,22 +361,22 @@ async function captureBackups() {
     return;
   }
   try {
-    const handle = await getBackupDirectoryHandle();
-    if (!handle || (await queryBackupPermission(handle)) !== 'granted') {
+    const profile = await getProfileBackupHandle();
+    if (!profile) {
       return;
     }
     const payload = await handleExport();
     if (!normalizeBackupPayload(payload).tabCount) {
       return;
     }
-    await writeLatestBackup(handle, payload);
+    await writeLatestBackup(profile, payload);
     const { [BACKUP_SETTINGS_KEY]: settings } = await chrome.storage.local.get({ [BACKUP_SETTINGS_KEY]: {} });
     const today = localDateKey();
     if (settings.lastBackupDate !== today) {
-      await writeRotatingBackup(handle, payload);
+      await writeRotatingBackup(profile, payload);
     }
+    await mirrorToChosenFolder(payload, settings.lastBackupDate !== today);
     await saveBackupSettings({
-      folderName: backupFolderName(handle),
       lastBackupAt: payload.generatedAt,
       lastBackupDate: today,
       lastError: null
@@ -386,6 +384,20 @@ async function captureBackups() {
   } catch (error) {
     console.error('[GroupHub] periodic backup failed', error);
     await saveBackupSettings({ lastError: String(error) });
+  }
+}
+
+async function mirrorToChosenFolder(payload, isFirstToday) {
+  try {
+    const chosen = await getChosenHandleIfAllowed();
+    if (chosen) {
+      await writeLatestBackup(chosen, payload);
+      if (isFirstToday) {
+        await writeRotatingBackup(chosen, payload);
+      }
+    }
+  } catch (error) {
+    console.error('[GroupHub] unable to copy backup to chosen folder', error);
   }
 }
 
